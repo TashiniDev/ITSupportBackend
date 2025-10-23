@@ -49,25 +49,37 @@ async function init() {
     ) ENGINE=INNODB;
   `;
 
-  const createRolesTable = `
-    CREATE TABLE IF NOT EXISTS roles (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL UNIQUE
-    ) ENGINE=INNODB;
+  const createRoleTable = `
+     CREATE TABLE IF NOT EXISTS \`role\` (
+      \`Id\` int NOT NULL AUTO_INCREMENT,
+      \`Name\` varchar(100) NOT NULL,
+      \`CreatedBy\` varchar(150) DEFAULT NULL,
+      \`CreatedDate\` datetime DEFAULT CURRENT_TIMESTAMP,
+      \`UpdatedBy\` varchar(150) DEFAULT NULL,
+      \`UpdatedDate\` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      \`IsActive\` tinyint(1) DEFAULT '1',
+      PRIMARY KEY (\`Id\`)
+    ) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
   `;
 
-  const createCategoriesTable = `
-    CREATE TABLE IF NOT EXISTS categories (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      name VARCHAR(100) NOT NULL UNIQUE
-    ) ENGINE=INNODB;
+  const createCategoryTable = `
+     CREATE TABLE IF NOT EXISTS \`category\` (
+      \`Id\` int NOT NULL AUTO_INCREMENT,
+      \`Name\` varchar(100) NOT NULL,
+      \`CreatedBy\` varchar(150) DEFAULT NULL,
+      \`CreatedDate\` datetime DEFAULT CURRENT_TIMESTAMP,
+      \`UpdatedBy\` varchar(150) DEFAULT NULL,
+      \`UpdatedDate\` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      \`IsActive\` tinyint(1) DEFAULT '1',
+      PRIMARY KEY (\`Id\`)
+    ) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
   `;
 
   const conn = await pool.getConnection();
   try {
     // Ensure auxiliary tables exist before creating users with FKs
-    await conn.query(createRolesTable);
-    await conn.query(createCategoriesTable);
+    await conn.query(createRoleTable);
+    await conn.query(createCategoryTable);
     await conn.query(createUsersTable);
   } finally {
     conn.release();
