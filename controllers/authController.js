@@ -11,11 +11,7 @@ const transporter = createTransport({
         user: '3treecrops2@gmail.com',
         pass: 'txjwjrctbiahfldg'
     }
-});
-
-/**
- * User Registration with Firebase Authentication and Email Verification
- */
+}); 
 exports.register = async (req, res) => {
     const { email, password, name, role, category } = req.body;
 

@@ -75,11 +75,25 @@ async function init() {
     ) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
   `;
 
+  const createDepartmentTable = `
+     CREATE TABLE IF NOT EXISTS \`department\` (
+      \`Id\` int NOT NULL AUTO_INCREMENT,
+      \`Name\` varchar(100) NOT NULL,
+      \`CreatedBy\` varchar(150) DEFAULT NULL,
+      \`CreatedDate\` datetime DEFAULT CURRENT_TIMESTAMP,
+      \`UpdatedBy\` varchar(150) DEFAULT NULL,
+      \`UpdatedDate\` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      \`IsActive\` tinyint(1) DEFAULT '1',
+      PRIMARY KEY (\`Id\`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  `;
+
   const conn = await pool.getConnection();
   try {
     // Ensure auxiliary tables exist before creating users with FKs
     await conn.query(createRoleTable);
     await conn.query(createCategoryTable);
+    await conn.query(createDepartmentTable);
     await conn.query(createUsersTable);
   } finally {
     conn.release();
