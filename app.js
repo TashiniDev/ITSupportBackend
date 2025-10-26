@@ -6,6 +6,7 @@ const dotenv = require('dotenv');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const lookupsRoutes = require('./routes/lookupsRoutes');
+const ticketRoutes = require('./routes/ticketRoutes');
 const { init } = require('./config/db');
 
 dotenv.config();
@@ -36,6 +37,7 @@ app.use((req, res, next) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/lookups', lookupsRoutes);
+app.use('/api/tickets', ticketRoutes);
 
 // Error handling (always at the bottom)
 app.use((err, req, res, next) => {
