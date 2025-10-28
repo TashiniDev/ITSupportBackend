@@ -26,14 +26,6 @@ exports.createTicket = async (req, res) => {
             description
         } = req.body;
         
-        // Validate required fields
-        if (!fullName || !description) {
-            await connection.rollback();
-            return res.status(400).json({
-                message: 'Full name and description are required fields'
-            });
-        }
-        
         // Get user info from auth middleware
         const createdBy = req.user?.name || req.user?.email || 'System';
         

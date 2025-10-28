@@ -73,7 +73,8 @@ exports.login = async (req, res) => {
 
     try {
     const pool = getPool();
-    const [rows] = await pool.query('SELECT uid, password FROM user WHERE email = ?', [email]);
+    // Include roleId and name in the select so we can add the user's role and name to the JWT
+    const [rows] = await pool.query('SELECT uid, password, roleId, name FROM user WHERE email = ?', [email]);
         if (rows.length === 0) {
             return res.status(400).json({ message: 'Invalid email or password' });
         }
@@ -82,12 +83,13 @@ exports.login = async (req, res) => {
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(400).json({ message: 'Invalid email or password' });
 
-        const jwtToken = jwt.sign({ uid: user.uid, email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        // Add roleId and name to the token payload so frontend / downstream services can use them
+        const jwtToken = jwt.sign({ uid: user.uid, email, roleId: user.roleId, name: user.name }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
         res.status(200).json({
             message: 'Login successful',
             token: jwtToken,
-            user: { uid: user.uid, email }
+            user: { uid: user.uid, email, name: user.name, roleId: user.roleId }
         });
     } catch (error) {
         res.status(400).json({

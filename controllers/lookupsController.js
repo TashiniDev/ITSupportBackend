@@ -79,9 +79,25 @@ exports.getCategories = async (req, res) => {
 exports.getRequestTypes = async (req, res) => {
     try {
         const pool = getPool();
-        const [rows] = await pool.query(
-            'SELECT Id, Name FROM requesttype WHERE IsActive = 1 ORDER BY Name ASC'
-        );
+
+        // Accept categoryId from route params or query string
+        const categoryId = req.params.categoryId || req.query.categoryId || null;
+
+        let rows;
+        if (categoryId && !isNaN(categoryId)) {
+            // Filter by CategoryId when provided
+            const [result] = await pool.query(
+                'SELECT Id, Name FROM requesttype WHERE IsActive = 1 AND CategoryId = ? ORDER BY Name ASC',
+                [Number(categoryId)]
+            );
+            rows = result;
+        } else {
+            // No category filter: return all active request types
+            const [result] = await pool.query(
+                'SELECT Id, Name FROM requesttype WHERE IsActive = 1 ORDER BY Name ASC'
+            );
+            rows = result;
+        }
 
         res.status(200).json({
             message: 'Request types retrieved successfully',
@@ -103,9 +119,25 @@ exports.getRequestTypes = async (req, res) => {
 exports.getIssueTypes = async (req, res) => {
     try {
         const pool = getPool();
-        const [rows] = await pool.query(
-            'SELECT Id, Name FROM issuetype WHERE IsActive = 1 ORDER BY Name ASC'
-        );
+
+        // Accept categoryId from route params or query string
+        const categoryId = req.params.categoryId || req.query.categoryId || null;
+
+        let rows;
+        if (categoryId && !isNaN(categoryId)) {
+            // Filter by CategoryId when provided
+            const [result] = await pool.query(
+                'SELECT Id, Name FROM issuetype WHERE IsActive = 1 AND CategoryId = ? ORDER BY Name ASC',
+                [Number(categoryId)]
+            );
+            rows = result;
+        } else {
+            // No category filter: return all active issue types
+            const [result] = await pool.query(
+                'SELECT Id, Name FROM issuetype WHERE IsActive = 1 ORDER BY Name ASC'
+            );
+            rows = result;
+        }
 
         res.status(200).json({
             message: 'Issue types retrieved successfully',
