@@ -89,162 +89,87 @@ exports.createTicket = async (req, res) => {
         
         await connection.commit();
         
-        // Send email notifications to relevant users
+        // Send email notifications using Microsoft Graph API
         try {
-            // Get users to notify: users in the ticket's category OR users with role ID 3
-            let emailQuery = `
+            const emailServiceApp = require('../services/emailServiceApp');
+            
+            // Get category team members (users in the ticket's specific category)
+            let categoryTeamQuery = `
                 SELECT DISTINCT u.email, u.name 
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
-                AND (u.categoryId = ? OR u.roleId = 3)
+                AND u.categoryId = ?
             `;
             
-            const [emailUsers] = await connection.query(emailQuery, [category ? parseInt(category) : null]);
+            // Get IT Head (users with role ID 3)
+            let itHeadQuery = `
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.roleId = 3
+                LIMIT 1
+            `;
             
-            if (emailUsers.length > 0) {
-                const nodemailer = require('nodemailer');
-                
-                // Configure nodemailer with improved compatibility
-                const transporter = nodemailer.createTransport({
-                    host: 'smtp.gmail.com',
-                    port: 587,
-                    secure: false, // Use STARTTLS
-                    auth: {
-                        user: '3treecrops2@gmail.com',
-                        pass: 'txjwjrctbiahfldg'
-                    },
-                    tls: {
-                        rejectUnauthorized: false
-                    }
-                });
-                
+            const [categoryTeamUsers] = await connection.query(categoryTeamQuery, [category ? parseInt(category) : null]);
+            const [itHeadUsers] = await connection.query(itHeadQuery);
+            
+            if (categoryTeamUsers.length > 0 || itHeadUsers.length > 0) {
                 // Generate ticket number for email
                 const ticketNumber = `TK-${new Date().getFullYear()}-${String(ticketId).padStart(3, '0')}`;
                 
-                // Send email to each user
-                for (const user of emailUsers) {
-                    try {
-                        // Get additional ticket details for email
-                        const [ticketDetails] = await connection.query(`
-                            SELECT 
-                                t.Name as fullName,
-                                t.ContactNumber,
-                                t.Description,
-                                d.Name as departmentName,
-                                comp.Name as companyName,
-                                c.Name as categoryName,
-                                it.Name as issueTypeName,
-                                rt.Name as requestTypeName,
-                                u.Name as assignedToName
-                            FROM ticket t
-                            LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
-                            LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
-                            LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
-                            LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
-                            LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
-                            LEFT JOIN user u ON t.AssignerId = u.Id AND u.IsActive = 1
-                            WHERE t.Id = ?
-                        `, [ticketId]);
-                        
-                        const ticket = ticketDetails[0] || {};
-                        
-                        await transporter.sendMail({
-                            from: '"IT Support System" <3treecrops2@gmail.com>',
-                            to: user.email,
-                            subject: `New Ticket Created: ${ticketNumber}`,
-                            html: `
-                                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
-                                    <h2 style="color: #2c5aa0; text-align: center; margin-bottom: 30px;">🎫 New Support Ticket Created</h2>
-                                    
-                                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                                        <h3 style="color: #495057; margin-top: 0;">Ticket Information</h3>
-                                        <table style="width: 100%; border-collapse: collapse;">
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold; width: 30%;">Ticket Number:</td>
-                                                <td style="padding: 8px 0;">${ticketNumber}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Status:</td>
-                                                <td style="padding: 8px 0; color: #28a745;">NEW</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Priority:</td>
-                                                <td style="padding: 8px 0; color: #17a2b8;">LOW</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Created Date:</td>
-                                                <td style="padding: 8px 0;">${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</td>
-                                            </tr>
-                                        </table>
-                                    </div>
-                                    
-                                    <div style="background-color: #fff; padding: 15px; border: 1px solid #e9ecef; border-radius: 5px; margin-bottom: 20px;">
-                                        <h3 style="color: #495057; margin-top: 0;">Contact Details</h3>
-                                        <table style="width: 100%; border-collapse: collapse;">
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold; width: 30%;">Full Name:</td>
-                                                <td style="padding: 8px 0;">${ticket.fullName || fullName || 'N/A'}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Contact Number:</td>
-                                                <td style="padding: 8px 0;">${ticket.ContactNumber || contactNumber || 'N/A'}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Department:</td>
-                                                <td style="padding: 8px 0;">${ticket.departmentName || 'N/A'}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Company:</td>
-                                                <td style="padding: 8px 0;">${ticket.companyName || 'N/A'}</td>
-                                            </tr>
-                                        </table>
-                                    </div>
-                                    
-                                    <div style="background-color: #fff; padding: 15px; border: 1px solid #e9ecef; border-radius: 5px; margin-bottom: 20px;">
-                                        <h3 style="color: #495057; margin-top: 0;">Issue Details</h3>
-                                        <table style="width: 100%; border-collapse: collapse;">
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold; width: 30%;">Category:</td>
-                                                <td style="padding: 8px 0;">${ticket.categoryName || 'N/A'}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Issue Type:</td>
-                                                <td style="padding: 8px 0;">${ticket.issueTypeName || 'N/A'}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Request Type:</td>
-                                                <td style="padding: 8px 0;">${ticket.requestTypeName || 'N/A'}</td>
-                                            </tr>
-                                            <tr>
-                                                <td style="padding: 8px 0; font-weight: bold;">Assigned To:</td>
-                                                <td style="padding: 8px 0;">${ticket.assignedToName || 'Unassigned'}</td>
-                                            </tr>
-                                        </table>
-                                    </div>
-                                    
-                                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                                        <h3 style="color: #495057; margin-top: 0;">Description</h3>
-                                        <p style="line-height: 1.6; margin: 0;">${ticket.Description || description || 'No description provided'}</p>
-                                    </div>
-                                    
-                                    ${attachmentIds.length > 0 ? `
-                                    <div style="background-color: #fff3cd; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px; margin-bottom: 20px;">
-                                        <h3 style="color: #856404; margin-top: 0;">📎 Attachments</h3>
-                                        <p style="margin: 0; color: #856404;">${attachmentIds.length} file(s) attached to this ticket</p>
-                                    </div>
-                                    ` : ''}
-                                    
-                                    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef;">
-                                        <p style="color: #6c757d; margin: 0;">Please check the IT Support system for more details and to take action on this ticket.</p>
-                                        <p style="color: #6c757d; margin: 10px 0 0 0; font-size: 12px;">This is an automated notification from the IT Support System.</p>
-                                    </div>
-                                </div>
-                            `
-                        });
-                        console.log(`Email sent successfully to ${user.email}`);
-                    } catch (emailError) {
-                        console.error(`Failed to send email to ${user.email}:`, emailError.message);
-                    }
+                // Get comprehensive ticket details for email
+                const [ticketDetails] = await connection.query(`
+                    SELECT 
+                        t.Name as fullName,
+                        t.ContactNumber,
+                        t.Description,
+                        d.Name as departmentName,
+                        comp.Name as companyName,
+                        c.Name as categoryName,
+                        it.Name as issueTypeName,
+                        rt.Name as requestTypeName,
+                        u.Name as assignedToName
+                    FROM ticket t
+                    LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
+                    LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
+                    LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
+                    LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
+                    LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
+                    LEFT JOIN user u ON t.AssignerId = u.Id AND u.IsActive = 1
+                    WHERE t.Id = ?
+                `, [ticketId]);
+                
+                const ticket = ticketDetails[0] || {};
+                
+                // Prepare ticket data for email service
+                const ticketData = {
+                    ticketId: ticketNumber,
+                    category: ticket.categoryName || 'Uncategorized',
+                    assignedTeam: ticket.categoryName || 'General',
+                    requesterName: ticket.fullName || fullName || 'N/A',
+                    requesterContact: ticket.ContactNumber || contactNumber || 'N/A',
+                    requesterDepartment: ticket.departmentName || 'N/A',
+                    requesterCompany: ticket.companyName || 'N/A',
+                    issueType: ticket.issueTypeName || 'N/A',
+                    assignedTo: ticket.assignedToName || 'Unassigned',
+                    assignedDate: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
+                    createdDate: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
+                    lastUpdated: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
+                    title: ticket.fullName || fullName || '',
+                    description: ticket.Description || description || 'No description provided',
+                    priority: 'LOW'
+                };
+                
+                // Get IT Head email
+                const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+                
+                // Send ticket creation email using Microsoft Graph API
+                try {
+                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail);
+                    console.log(`📧 Ticket creation emails sent successfully for ticket ${ticketNumber}`);
+                } catch (emailError) {
+                    console.error(`📧 Failed to send ticket creation emails:`, emailError.message);
+                    // Don't fail the ticket creation if email fails
                 }
             } else {
                 console.log('No users found to notify for this ticket category/role');
@@ -904,6 +829,138 @@ exports.updateTicketStatus = async (req, res) => {
         
         const updatedTicket = updatedTicketRows[0];
         
+        // Send email notifications for status updates (only for PROCESSING and COMPLETED)
+        if (newStatus === 'PROCESSING' || newStatus === 'COMPLETED') {
+            console.log(`🔔 Triggering email notifications for status change: ${currentStatus} → ${newStatus}`);
+            try {
+                const emailServiceApp = require('../services/emailServiceApp');
+                
+                // Get comprehensive ticket details for email
+                const [ticketDetailsRows] = await pool.query(`
+                    SELECT 
+                        t.Id,
+                        CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
+                        t.Name as fullName,
+                        t.ContactNumber,
+                        t.Description,
+                        t.Status,
+                        t.SeniorityLevel as priority,
+                        t.CreatedDate,
+                        t.UpdatedDate,
+                        t.CreatedBy,
+                        t.CategoryId,
+                        d.Name as departmentName,
+                        comp.Name as companyName,
+                        c.Name as categoryName,
+                        it.Name as issueTypeName,
+                        rt.Name as requestTypeName,
+                        u.Name as assignedToName
+                    FROM ticket t
+                    LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
+                    LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
+                    LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
+                    LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
+                    LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
+                    LEFT JOIN user u ON t.AssignerId = u.Id AND u.IsActive = 1
+                    WHERE t.Id = ?
+                `, [parseInt(ticketId)]);
+                
+                const ticketDetails = ticketDetailsRows[0];
+                console.log(`📋 Ticket details found:`, ticketDetails ? 'Yes' : 'No');
+                
+                if (ticketDetails) {
+                    console.log(`📊 Ticket Category ID: ${ticketDetails.CategoryId}`);
+                    console.log(`👤 Current user email: ${req.user?.email || 'Not available'}`);
+                    
+                    // Get category team members (including all active users in category - we'll filter later if needed)
+                    const [categoryTeamUsers] = await pool.query(`
+                        SELECT DISTINCT u.email, u.name 
+                        FROM user u 
+                        WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                        AND u.categoryId = ?
+                    `, [ticketDetails.CategoryId]);
+                    
+                    // Filter out the current user if they are in the same category (to avoid self-notification)
+                    const filteredTeamUsers = categoryTeamUsers.filter(user => 
+                        user.email !== (req.user?.email || '')
+                    );
+                    
+                    console.log(`👥 Total category team members: ${categoryTeamUsers.length}`);
+                    console.log(`👥 Filtered team members (excluding current user): ${filteredTeamUsers.length}`);
+                    filteredTeamUsers.forEach(member => console.log(`   - ${member.name} (${member.email})`));
+                    
+                    // Get IT Head
+                    const [itHeadUsers] = await pool.query(`
+                        SELECT DISTINCT u.email, u.name 
+                        FROM user u 
+                        WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                        AND u.roleId = 3
+                        LIMIT 1
+                    `);
+                    
+                    console.log(`👑 IT Head found: ${itHeadUsers.length > 0 ? itHeadUsers[0].email : 'None'}`);
+                    
+                    // Get ticket creator email (try to find in users table first, fallback to CreatedBy field)
+                    let ticketCreatorEmail = null;
+                    const [creatorUsers] = await pool.query(`
+                        SELECT email FROM user 
+                        WHERE email = ? AND IsActive = 1
+                    `, [ticketDetails.CreatedBy]);
+                    
+                    if (creatorUsers.length > 0) {
+                        ticketCreatorEmail = creatorUsers[0].email;
+                    } else if (ticketDetails.CreatedBy && ticketDetails.CreatedBy.includes('@')) {
+                        ticketCreatorEmail = ticketDetails.CreatedBy;
+                    }
+                    
+                    console.log(`📝 Ticket creator email: ${ticketCreatorEmail || 'Not found'}`);
+                    
+                    // Prepare ticket data for email
+                    const ticketData = {
+                        ticketId: ticketDetails.ticketNumber,
+                        category: ticketDetails.categoryName || 'Uncategorized',
+                        assignedTeam: ticketDetails.categoryName || 'General',
+                        requesterName: ticketDetails.fullName || 'N/A',
+                        requesterContact: ticketDetails.ContactNumber || 'N/A',
+                        requesterDepartment: ticketDetails.departmentName || 'N/A',
+                        requesterCompany: ticketDetails.companyName || 'N/A',
+                        issueType: ticketDetails.issueTypeName || 'N/A',
+                        assignedTo: ticketDetails.assignedToName || 'Unassigned',
+                        createdDate: ticketDetails.CreatedDate ? new Date(ticketDetails.CreatedDate).toLocaleDateString() + ' ' + new Date(ticketDetails.CreatedDate).toLocaleTimeString() : 'N/A',
+                        updatedDate: ticketDetails.UpdatedDate ? new Date(ticketDetails.UpdatedDate).toLocaleDateString() + ' ' + new Date(ticketDetails.UpdatedDate).toLocaleTimeString() : 'N/A',
+                        title: ticketDetails.fullName || '',
+                        description: ticketDetails.Description || 'No description provided',
+                        priority: ticketDetails.priority || 'LOW'
+                    };
+                    
+                    const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+                    
+                    console.log(`📧 Attempting to send status update emails...`);
+                    
+                    // Send status update emails
+                    await emailServiceApp.sendTicketStatusUpdateEmail(
+                        ticketData,
+                        filteredTeamUsers,
+                        itHeadEmail,
+                        ticketCreatorEmail,
+                        currentStatus,
+                        newStatus,
+                        updatedBy
+                    );
+                    
+                    console.log(`✅ Status update emails sent successfully for ticket ${ticketDetails.ticketNumber} (${currentStatus} → ${newStatus})`);
+                } else {
+                    console.log(`❌ No ticket details found for ticket ID: ${ticketId}`);
+                }
+            } catch (emailError) {
+                console.error('❌ Error sending status update emails:', emailError.message);
+                console.error('Full email error:', emailError);
+                // Don't fail the status update if email fails
+            }
+        } else {
+            console.log(`ℹ️ No email notifications needed for status change: ${currentStatus} → ${newStatus} (only PROCESSING/COMPLETED trigger emails)`);
+        }
+        
         res.status(200).json({
             success: true,
             message: 'Ticket status updated successfully',
@@ -1039,9 +1096,11 @@ exports.updateTicketAssignment = async (req, res) => {
         
         const updatedTicket = updatedTicketRows[0];
         
-        // Send email notification to the newly assigned user
+        // Send email notification to the newly assigned user using Microsoft Graph API
         if (newAssignerId) {
             try {
+                const emailServiceApp = require('../services/emailServiceApp');
+                
                 // Get the assigned user's email
                 const [assignedUserRows] = await pool.query(
                     'SELECT email, name FROM user WHERE Id = ? AND IsActive = 1',
@@ -1085,134 +1144,36 @@ exports.updateTicketAssignment = async (req, res) => {
                     );
                     const attachmentCount = attachmentRows[0].attachmentCount;
                     
-                    const nodemailer = require('nodemailer');
-                    
-                    // Configure nodemailer with improved compatibility
-                    const transporter = nodemailer.createTransport({
-                        host: 'smtp.gmail.com',
-                        port: 587,
-                        secure: false, // Use STARTTLS
-                        auth: {
-                            user: '3treecrops2@gmail.com',
-                            pass: 'txjwjrctbiahfldg'
-                        },
-                        tls: {
-                            rejectUnauthorized: false
-                        }
-                    });
-                    
-                    await transporter.sendMail({
-                        from: '"IT Support System" <3treecrops2@gmail.com>',
-                        to: assignedUser.email,
-                        subject: `Ticket Assigned to You: ${updatedTicket.ticketNumber}`,
-                        html: `
-                            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
-                                <h2 style="color: #2c5aa0; text-align: center; margin-bottom: 30px;">🎯 Ticket Assigned to You</h2>
-                                
-                                <div style="background-color: #e8f4fd; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #2c5aa0;">
-                                    <h3 style="color: #2c5aa0; margin-top: 0;">Assignment Notification</h3>
-                                    <p style="margin: 10px 0; font-size: 16px;">Hello <strong>${assignedUser.name}</strong>,</p>
-                                    <p style="margin: 10px 0;">A ticket has been assigned to you. Please review the details below and take appropriate action.</p>
-                                </div>
-                                
-                                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                                    <h3 style="color: #495057; margin-top: 0;">Ticket Information</h3>
-                                    <table style="width: 100%; border-collapse: collapse;">
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold; width: 30%;">Ticket Number:</td>
-                                            <td style="padding: 8px 0;">${updatedTicket.ticketNumber}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Status:</td>
-                                            <td style="padding: 8px 0; color: #28a745;">${ticketDetails.Status || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Priority:</td>
-                                            <td style="padding: 8px 0; color: #17a2b8;">${ticketDetails.priority || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Created Date:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.CreatedDate ? new Date(ticketDetails.CreatedDate).toLocaleDateString() + ' ' + new Date(ticketDetails.CreatedDate).toLocaleTimeString() : 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Assigned Date:</td>
-                                            <td style="padding: 8px 0;">${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</td>
-                                        </tr>
-                                    </table>
-                                </div>
-                                
-                                <div style="background-color: #fff; padding: 15px; border: 1px solid #e9ecef; border-radius: 5px; margin-bottom: 20px;">
-                                    <h3 style="color: #495057; margin-top: 0;">Contact Details</h3>
-                                    <table style="width: 100%; border-collapse: collapse;">
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold; width: 30%;">Full Name:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.fullName || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Contact Number:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.ContactNumber || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Department:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.departmentName || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Company:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.companyName || 'N/A'}</td>
-                                        </tr>
-                                    </table>
-                                </div>
-                                
-                                <div style="background-color: #fff; padding: 15px; border: 1px solid #e9ecef; border-radius: 5px; margin-bottom: 20px;">
-                                    <h3 style="color: #495057; margin-top: 0;">Issue Details</h3>
-                                    <table style="width: 100%; border-collapse: collapse;">
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold; width: 30%;">Category:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.categoryName || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Issue Type:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.issueTypeName || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Request Type:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.requestTypeName || 'N/A'}</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding: 8px 0; font-weight: bold;">Created By:</td>
-                                            <td style="padding: 8px 0;">${ticketDetails.createdByName || 'N/A'}</td>
-                                        </tr>
-                                    </table>
-                                </div>
-                                
-                                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                                    <h3 style="color: #495057; margin-top: 0;">Description</h3>
-                                    <p style="line-height: 1.6; margin: 0;">${ticketDetails.Description || 'No description provided'}</p>
-                                </div>
-                                
-                                ${attachmentCount > 0 ? `
-                                <div style="background-color: #fff3cd; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px; margin-bottom: 20px;">
-                                    <h3 style="color: #856404; margin-top: 0;">📎 Attachments</h3>
-                                    <p style="margin: 0; color: #856404;">${attachmentCount} file(s) attached to this ticket</p>
-                                </div>
-                                ` : ''}
-                                
-                                <div style="background-color: #d4edda; padding: 15px; border: 1px solid #c3e6cb; border-radius: 5px; margin-bottom: 20px;">
-                                    <h3 style="color: #155724; margin-top: 0;">🚀 Next Steps</h3>
-                                    <p style="margin: 0; color: #155724;">
-                                        Please log into the IT Support system to view full ticket details and update the status as you work on resolving this issue.
-                                    </p>
-                                </div>
-                                
-                                <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef;">
-                                    <p style="color: #6c757d; margin: 0;">Thank you for your prompt attention to this ticket.</p>
-                                    <p style="color: #6c757d; margin: 10px 0 0 0; font-size: 12px;">This is an automated notification from the IT Support System.</p>
-                                </div>
+                    // Create simplified assignment notification email content
+                    const assignmentEmailHtml = `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                            <h2 style="color: #2c5aa0; text-align: center;">🎯 Ticket Assigned to You</h2>
+                            <p><strong>Hello ${assignedUser.name},</strong></p>
+                            <p>A ticket has been assigned to you: <strong>${updatedTicket.ticketNumber}</strong></p>
+                            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                                <h3>Ticket Details:</h3>
+                                <p><strong>Category:</strong> ${ticketDetails.categoryName || 'N/A'}</p>
+                                <p><strong>Requester:</strong> ${ticketDetails.fullName || 'N/A'}</p>
+                                <p><strong>Priority:</strong> ${ticketDetails.priority || 'N/A'}</p>
+                                <p><strong>Description:</strong> ${ticketDetails.Description || 'No description provided'}</p>
+                                ${attachmentCount > 0 ? `<p><strong>Attachments:</strong> ${attachmentCount} file(s)</p>` : ''}
                             </div>
-                        `
-                    });
-                    
-                    console.log(`Assignment notification email sent successfully to ${assignedUser.email}`);
+                            <p>Please log into the IT Support system to review full details and update the ticket status.</p>
+                            <p style="color: #6c757d; font-size: 12px;">This is an automated notification from the IT Support System.</p>
+                        </div>
+                    `;
+
+                    // Send assignment notification using Microsoft Graph API
+                    const emailData = {
+                        to: assignedUser.email,
+                        toName: assignedUser.name,
+                        subject: `Ticket Assigned to You: ${updatedTicket.ticketNumber}`,
+                        body: assignmentEmailHtml,
+                        contentType: 'HTML'
+                    };
+
+                    await emailServiceApp.sendEmailAsUser(emailData);
+                    console.log(`📧 Assignment notification email sent successfully to ${assignedUser.email}`);
                 } else {
                     console.log('Assigned user email not found or empty');
                 }

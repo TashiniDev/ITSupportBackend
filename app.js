@@ -2,12 +2,16 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const session = require('express-session');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const lookupsRoutes = require('./routes/lookupsRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
+const emailRoutes = require('./routes/emailRoutes');
+const emailTestRoutes = require('./routes/emailTestRoutes');
 const { init } = require('./config/db');
+const emailConfig = require('./config/emailConfig');
 
 dotenv.config();
 
@@ -17,6 +21,9 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Session middleware for email authentication
+app.use(session(emailConfig.sessionConfig));
 
 // Optional token decode middleware: if Authorization header present, decode JWT and attach req.user
 const jwt = require('jsonwebtoken');
@@ -38,6 +45,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/lookups', lookupsRoutes);
 app.use('/api/tickets', ticketRoutes);
+app.use('/api/email', emailRoutes);
+app.use('/api/email-test', emailTestRoutes);
 
 // Error handling (always at the bottom)
 app.use((err, req, res, next) => {

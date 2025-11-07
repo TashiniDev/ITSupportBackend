@@ -1,22 +1,11 @@
 const { getPool } = require('../config/db');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const { createTransport } = require('nodemailer');
 const { randomUUID } = require('crypto');
+const emailServiceApp = require('../services/emailServiceApp');
 
-// ✅ Configure Nodemailer for Gmail with better compatibility
-const transporter = createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // Use STARTTLS
-    auth: {
-        user: '3treecrops2@gmail.com',
-        pass: 'txjwjrctbiahfldg'
-    },
-    tls: {
-        rejectUnauthorized: false
-    }
-}); 
+// Note: Microsoft Graph API email service using Application Permissions
+// No user authentication required - uses client credentials flow 
 exports.register = async (req, res) => {
     const { email, password, name, role, category } = req.body;
 
@@ -50,34 +39,38 @@ exports.register = async (req, res) => {
     // Insert user with audit columns (CreatedBy, UpdatedBy, IsActive). CreatedDate/UpdatedDate handled by DB defaults.
     await pool.query('INSERT INTO user (name, uid, email, password, roleId, categoryId, CreatedBy, UpdatedBy, IsActive) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [name, uid, email, hashed, roleId, categoryId, actor, actor, true]);
 
-        // Send registration confirmation email
+        // Send registration confirmation email using Microsoft Graph API (Application Permissions)
         try {
-            await transporter.sendMail({
-            from: '"IT Support System" <3treecrops2@gmail.com>',
-            to: email,
-            subject: 'Welcome to IT Support System - Registration Successful',
-            text: `Welcome ${name || ''}!\n\nYour account has been registered successfully in the IT Support System.\n\nYou can now log in using your email address and password.\n\nBest regards,\nIT Support Team`,
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
-                    <h2 style="color: #2c5aa0; text-align: center;">Welcome to IT Support System</h2>
-                    <p>Hello <strong>${name || 'User'}</strong>,</p>
-                    <p>Your account has been successfully registered in the IT Support System.</p>
-                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                        <h3 style="color: #495057; margin-top: 0;">Account Details:</h3>
-                        <p><strong>Email:</strong> ${email}</p>
-                        <p><strong>Name:</strong> ${name || 'Not provided'}</p>
-                    </div>
-                    <p>You can now log in to the system using your email address and password.</p>
-                    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef;">
-                        <p style="color: #6c757d; margin: 0;">Best regards,<br>IT Support Team</p>
-                        <p style="color: #6c757d; margin: 10px 0 0 0; font-size: 12px;">This is an automated message from the IT Support System.</p>
-                    </div>
-                </div>
-            `
-            });
-            console.log(`Registration confirmation email sent successfully to ${email}`);
+            console.log(`✅ User registration successful for ${email}`);
+
+            // Resolve friendly role/category names when available so the welcome email
+            // can include a human-readable role and assigned categories.
+            let roleName = 'User';
+            let categoryNames = [];
+            if (roleId) {
+                try {
+                    const [r] = await pool.query('SELECT Name FROM role WHERE Id = ?', [roleId]);
+                    if (r && r.length) roleName = r[0].Name;
+                } catch (e) {
+                    console.warn('Could not resolve role name for roleId', roleId, e.message || e);
+                }
+            }
+            if (categoryId) {
+                try {
+                    const [c] = await pool.query('SELECT Name FROM category WHERE Id = ?', [categoryId]);
+                    if (c && c.length) categoryNames.push(c[0].Name);
+                } catch (e) {
+                    console.warn('Could not resolve category name for categoryId', categoryId, e.message || e);
+                }
+            }
+
+            // Send welcome email using application permissions (no interactive auth required)
+            const loginUrl = `${process.env.APP_URL || 'http://localhost:3000'}/login`;
+            await emailServiceApp.sendWelcomeEmail(email, name || 'User', { role: roleName, categories: categoryNames, loginUrl });
+            console.log(`📧 Welcome email sent successfully to ${email} from tashini.m@printcare.lk`);
+
         } catch (emailError) {
-            console.error(`Failed to send registration email to ${email}:`, emailError.message);
+            console.error(`📧 Failed to send registration email to ${email}:`, emailError.message);
             // Don't fail registration if email fails
         }
 
@@ -134,46 +127,23 @@ exports.forgotPassword = async (req, res) => {
             return res.status(400).json({ message: 'Email is required' });
         }
         const pool = getPool();
-        // Check if user exists
-        const [rows] = await pool.query('SELECT uid FROM user WHERE email = ?', [email]);
+        // Check if user exists and get user details
+        const [rows] = await pool.query('SELECT uid, name FROM user WHERE email = ?', [email]);
         if (rows.length === 0) return res.status(400).json({ message: 'Email not found' });
+
+        const user = rows[0];
+        const userName = user.name || 'User';
 
         // Generate password reset token (JWT short lived)
         const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1h' });
         const resetLink = `${process.env.APP_URL || 'http://localhost:3001'}/reset-password?token=${resetToken}`;
 
         try {
-            await transporter.sendMail({
-            from: '"IT Support System" <3treecrops2@gmail.com>',
-            to: email,
-            subject: 'IT Support System - Password Reset Request',
-            text: `You have requested to reset your password for the IT Support System.\n\nClick the link below to reset your password:\n${resetLink}\n\nThis link will expire in 1 hour.\n\nIf you did not request this password reset, please ignore this email.\n\nBest regards,\nIT Support Team`,
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
-                    <h2 style="color: #2c5aa0; text-align: center;">Password Reset Request</h2>
-                    <p>Hello,</p>
-                    <p>You have requested to reset your password for the IT Support System.</p>
-                    <div style="background-color: #fff3cd; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px; margin: 20px 0;">
-                        <p style="margin: 0; color: #856404;"><strong>Important:</strong> This password reset link will expire in 1 hour.</p>
-                    </div>
-                    <div style="text-align: center; margin: 30px 0;">
-                        <a href="${resetLink}" style="background-color: #2c5aa0; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Reset Password</a>
-                    </div>
-                    <p>If you cannot click the button above, copy and paste this link into your browser:</p>
-                    <p style="word-break: break-all; background-color: #f8f9fa; padding: 10px; border-radius: 3px; font-family: monospace;">${resetLink}</p>
-                    <div style="background-color: #f8d7da; padding: 15px; border: 1px solid #f5c6cb; border-radius: 5px; margin: 20px 0;">
-                        <p style="margin: 0; color: #721c24;"><strong>Security Notice:</strong> If you did not request this password reset, please ignore this email. Your password will remain unchanged.</p>
-                    </div>
-                    <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e9ecef;">
-                        <p style="color: #6c757d; margin: 0;">Best regards,<br>IT Support Team</p>
-                        <p style="color: #6c757d; margin: 10px 0 0 0; font-size: 12px;">This is an automated message from the IT Support System.</p>
-                    </div>
-                </div>
-            `
-            });
-            console.log(`Password reset email sent successfully to ${email}`);
+            // Send password reset email using Microsoft Graph API (Application Permissions)
+            await emailServiceApp.sendPasswordResetEmail(email, userName, resetLink);
+            console.log(`📧 Password reset email sent successfully to ${email} from tashini.m@printcare.lk`);
         } catch (emailError) {
-            console.error(`Failed to send password reset email to ${email}:`, emailError.message);
+            console.error(`📧 Failed to send password reset email to ${email}:`, emailError.message);
             return res.status(500).json({ message: 'Failed to send password reset email', error: emailError.message });
         }
 

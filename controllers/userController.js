@@ -1,4 +1,3 @@
-const nodemailer = require('nodemailer');
 const { getPool } = require('../config/db');
 
 // Get User Profile
