@@ -4,6 +4,10 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const session = require('express-session');
 
+// Load and validate environment variables
+dotenv.config();
+require('./config/validateEnv'); // This will validate all required env vars
+
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const lookupsRoutes = require('./routes/lookupsRoutes');
@@ -12,8 +16,6 @@ const emailRoutes = require('./routes/emailRoutes');
 const emailTestRoutes = require('./routes/emailTestRoutes');
 const { init } = require('./config/db');
 const emailConfig = require('./config/emailConfig');
-
-dotenv.config();
 
 const app = express();
 

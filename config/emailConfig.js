@@ -8,12 +8,12 @@ require('dotenv').config();
 
 const emailConfig = {
     // Azure App Registration Details
-    clientId: process.env.MICROSOFT_CLIENT_ID || '92b72dd5-08b9-4716-83ab-0fa62a48667a',
-    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '1_B8Q~5vR9aMfHHyD7D8lrEVvOEWXT9tRpuaXagQ',
-    tenantId: process.env.MICROSOFT_TENANT_ID || 'f2a64dac-8104-4934-852c-7511fd38f730',
+    clientId: process.env.MICROSOFT_CLIENT_ID,
+    clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+    tenantId: process.env.MICROSOFT_TENANT_ID,
     
     // Redirect URI (should match Azure App Registration)
-    redirectUri: process.env.MICROSOFT_REDIRECT_URI || 'http://localhost:3000/api/email/callback',
+    redirectUri: process.env.MICROSOFT_REDIRECT_URI,
     
     // Microsoft Graph API Scopes - using specific delegated permissions
     scopes: [
@@ -24,8 +24,8 @@ const emailConfig = {
     ],
     
     // Email sender details
-    senderEmail: process.env.SENDER_EMAIL || 'tashini.m@printcare.lk',
-    senderName: process.env.SENDER_NAME || 'IT Support Team',
+    senderEmail: process.env.SENDER_EMAIL,
+    senderName: process.env.SENDER_NAME,
     
     // Microsoft Graph API endpoints
     authority: function() {
@@ -56,7 +56,7 @@ const emailConfig = {
     
     // Session configuration
     sessionConfig: {
-        secret: process.env.SESSION_SECRET || 'your_session_secret_here',
+        secret: process.env.SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
         cookie: {

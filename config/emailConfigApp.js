@@ -7,17 +7,17 @@ require('dotenv').config();
 
 const emailConfigApp = {
     // Azure App Registration Details
-    clientId: process.env.MICROSOFT_CLIENT_ID || '92b72dd5-08b9-4716-83ab-0fa62a48667a',
-    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '1_B8Q~5vR9aMfHHyD7D8lrEVvOEWXT9tRpuaXagQ',
-    tenantId: process.env.MICROSOFT_TENANT_ID || 'f2a64dac-8104-4934-852c-7511fd38f730',
+    clientId: process.env.MICROSOFT_CLIENT_ID,
+    clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+    tenantId: process.env.MICROSOFT_TENANT_ID,
     
     // For application permissions, we don't need a redirect URI
     // Microsoft Graph API Scopes for Application Permissions
     scopes: ['https://graph.microsoft.com/.default'],
     
     // Email sender details
-    senderEmail: process.env.SENDER_EMAIL || 'tashini.m@printcare.lk',
-    senderName: process.env.SENDER_NAME || 'IT Support Team',
+    senderEmail: process.env.SENDER_EMAIL,
+    senderName: process.env.SENDER_NAME,
     
     // Microsoft Graph API endpoints
     authority: function() {

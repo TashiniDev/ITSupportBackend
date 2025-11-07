@@ -9,9 +9,9 @@ exports.testEmailService = async (req, res) => {
     try {
         console.log('🧪 Testing email service...');
         
-        // Test with a simple email
+        // Test with a simple email - use sender email from environment
         const testEmailData = {
-            to: 'tashini.m@printcare.lk', // Use a known working email
+            to: process.env.SENDER_EMAIL, // Use configured sender email for testing
             toName: 'Test User',
             subject: 'Email Service Test',
             body: `
@@ -64,14 +64,14 @@ exports.testStatusUpdateEmail = async (req, res) => {
         };
 
         const mockTeamMembers = [
-            { email: 'tashini.m@printcare.lk', name: 'Test Team Member' }
+            { email: process.env.SENDER_EMAIL, name: 'Test Team Member' }
         ];
 
         await emailServiceApp.sendTicketStatusUpdateEmail(
             mockTicketData,
             mockTeamMembers,
-            'tashini.m@printcare.lk', // IT Head
-            'tashini.m@printcare.lk', // Ticket creator
+            process.env.SENDER_EMAIL, // IT Head
+            process.env.SENDER_EMAIL, // Ticket creator
             'NEW',
             'PROCESSING',
             'Test System'
