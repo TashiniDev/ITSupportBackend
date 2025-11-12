@@ -1,7 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const authMiddleware = require('../middlewares/authMiddleware');
-const { createTicket, getTicket, getAllTickets, getMyTickets, updateTicketStatus, updateTicketAssignment, addComment, getComments } = require('../controllers/ticketController');
+const { createTicket, getTicket, getAllTickets, getMyTickets, updateTicketStatus, updateTicketAssignment, addComment, getComments, bulkUpdateTicketsWithCommentsToProcessing } = require('../controllers/ticketController');
 
 const router = express.Router();
 
@@ -41,6 +41,9 @@ router.get('/', authMiddleware, getAllTickets);
 
 // Get tickets related to the logged-in user - Protected route
 router.get('/my-tickets', authMiddleware, getMyTickets);
+
+// Bulk update tickets with comments from NEW to PROCESSING - Protected route
+router.put('/bulk-update-status', authMiddleware, bulkUpdateTicketsWithCommentsToProcessing);
 
 // Create new ticket with optional file attachments - Protected route
 router.post('/', 

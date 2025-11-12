@@ -39,12 +39,14 @@ function validateEnvironmentVariables() {
 
     // Check optional variables and set defaults
     if (!process.env.PORT) {
+        // Default to 3001 (frontend expected to run on :3001)
         process.env.PORT = '3000';
         warnings.push('PORT not set, defaulting to 3000');
     }
 
     if (!process.env.APP_URL) {
-        process.env.APP_URL = `http://localhost:${process.env.PORT}`;
+        // Default APP_URL to the requested IP and the configured port so emails point to the host IP
+        process.env.APP_URL = `http://10.1.1.57:${process.env.PORT}`;
         warnings.push(`APP_URL not set, defaulting to ${process.env.APP_URL}`);
     }
 

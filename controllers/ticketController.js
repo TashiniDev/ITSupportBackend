@@ -269,22 +269,34 @@ exports.getTicket = async (req, res) => {
              ORDER BY CreatedDate ASC`,
             [parseInt(ticketId)]
         );
-        
+
         const ticket = ticketRows[0];
-        
-        // Format attachments with proper file information
-        const attachments = attachmentRows.map(attachment => {
-            const path = attachment.Path;
-            const fileName = path.split('/').pop(); // Get filename from path
-            const originalName = fileName.split('_').slice(1).join('_'); // Remove timestamp prefix
-            
+
+        // Defensive: filter out empty/null paths and dedupe by Path
+        const seen = new Set();
+        const filteredAttachments = (attachmentRows || []).filter(a => {
+            if (!a || !a.Path) return false;
+            const p = ('' + a.Path).trim();
+            if (!p) return false;
+            if (seen.has(p)) return false;
+            seen.add(p);
+            return true;
+        });
+
+        // Format attachments with safe parsing
+        const attachments = filteredAttachments.map(attachment => {
+            const path = (attachment.Path || '').toString();
+            const parts = path.split('/').filter(Boolean);
+            const fileName = parts.length ? parts[parts.length - 1] : '';
+            const originalName = fileName && fileName.includes('_') ? fileName.split('_').slice(1).join('_') : fileName;
+
             return {
                 id: attachment.Id,
                 originalName: originalName || fileName,
                 fileName: fileName,
                 size: null, // Size not stored in DB, would need file system check
                 mimeType: null, // MIME type not stored in DB
-                url: attachment.Path
+                url: path
             };
         });
         
@@ -1235,9 +1247,9 @@ exports.addComment = async (req, res) => {
         
         const pool = getPool();
         
-        // First, verify that the ticket exists and is active
+        // First, verify that the ticket exists and is active, and get current status
         const [ticketRows] = await pool.query(
-            'SELECT Id FROM ticket WHERE Id = ? AND IsActive = 1',
+            'SELECT Id, Status FROM ticket WHERE Id = ? AND IsActive = 1',
             [parseInt(ticketId)]
         );
         
@@ -1247,6 +1259,9 @@ exports.addComment = async (req, res) => {
                 message: 'Ticket not found'
             });
         }
+        
+        const currentTicket = ticketRows[0];
+        const shouldUpdateStatus = currentTicket.Status === 'NEW';
         
         // Get user info from auth middleware
         const createdBy = req.user?.name || req.user?.email || 'System';
@@ -1279,9 +1294,33 @@ exports.addComment = async (req, res) => {
         
         const newComment = newCommentRows[0];
         
+        // Auto-update ticket status from NEW to PROCESSING when comment is added
+        let statusUpdated = false;
+        if (shouldUpdateStatus) {
+            try {
+                const updatedBy = req.user?.name || req.user?.email || 'System';
+                const [updateResult] = await pool.query(
+                    `UPDATE ticket 
+                     SET Status = 'PROCESSING', UpdatedBy = ?, UpdatedDate = NOW() 
+                     WHERE Id = ? AND IsActive = 1 AND Status = 'NEW'`,
+                    [updatedBy, parseInt(ticketId)]
+                );
+                
+                if (updateResult.affectedRows > 0) {
+                    statusUpdated = true;
+                    console.log(`✅ Auto-updated ticket ${ticketId} status from NEW to PROCESSING after comment added`);
+                }
+            } catch (statusUpdateError) {
+                // Log the error but don't fail the comment addition
+                console.error('Error auto-updating ticket status:', statusUpdateError);
+            }
+        }
+        
         res.status(201).json({
             success: true,
-            message: 'Comment added successfully',
+            message: statusUpdated 
+                ? 'Comment added successfully and ticket status updated to PROCESSING' 
+                : 'Comment added successfully',
             data: {
                 id: newComment.Id,
                 comment: newComment.Comment,
@@ -1289,7 +1328,9 @@ exports.addComment = async (req, res) => {
                 name: newComment.Name,
                 createdBy: newComment.CreatedBy,
                 createdAt: newComment.CreatedDate,
-                ticketId: parseInt(ticketId)
+                ticketId: parseInt(ticketId),
+                statusUpdated: statusUpdated,
+                newStatus: statusUpdated ? 'PROCESSING' : currentTicket.Status
             }
         });
         
@@ -1361,6 +1402,80 @@ exports.getComments = async (req, res) => {
         res.status(500).json({
             success: false,
             message: 'Error fetching comments',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Bulk update tickets with comments from NEW to PROCESSING status
+ * PUT /api/tickets/bulk-update-status
+ * This function updates all tickets that have comments but still have status 'NEW' to 'PROCESSING'
+ */
+exports.bulkUpdateTicketsWithCommentsToProcessing = async (req, res) => {
+    try {
+        const pool = getPool();
+        
+        // Get user info for the update
+        const updatedBy = req.user?.name || req.user?.email || 'System';
+        
+        // Find all tickets that have comments but still have status 'NEW'
+        const [ticketsToUpdate] = await pool.query(`
+            SELECT DISTINCT t.Id, 
+                   CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
+                   t.Status
+            FROM ticket t 
+            INNER JOIN comment c ON t.Id = c.TicketId 
+            WHERE t.Status = 'NEW' 
+              AND t.IsActive = 1 
+              AND c.IsActive = 1
+            ORDER BY t.Id
+        `);
+        
+        if (ticketsToUpdate.length === 0) {
+            return res.status(200).json({
+                success: true,
+                message: 'No tickets found that need status update',
+                data: {
+                    updatedCount: 0,
+                    tickets: []
+                }
+            });
+        }
+        
+        // Update all these tickets to PROCESSING status
+        const ticketIds = ticketsToUpdate.map(ticket => ticket.Id);
+        const placeholders = ticketIds.map(() => '?').join(',');
+        
+        const [updateResult] = await pool.query(`
+            UPDATE ticket 
+            SET Status = 'PROCESSING', UpdatedBy = ?, UpdatedDate = NOW() 
+            WHERE Id IN (${placeholders}) 
+              AND Status = 'NEW' 
+              AND IsActive = 1
+        `, [updatedBy, ...ticketIds]);
+        
+        console.log(`✅ Bulk updated ${updateResult.affectedRows} tickets from NEW to PROCESSING`);
+        
+        res.status(200).json({
+            success: true,
+            message: `Successfully updated ${updateResult.affectedRows} tickets to PROCESSING status`,
+            data: {
+                updatedCount: updateResult.affectedRows,
+                tickets: ticketsToUpdate.map(ticket => ({
+                    id: ticket.Id,
+                    ticketNumber: ticket.ticketNumber,
+                    previousStatus: 'NEW',
+                    newStatus: 'PROCESSING'
+                }))
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error in bulk status update:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating ticket statuses',
             error: error.message
         });
     }

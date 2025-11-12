@@ -7,12 +7,13 @@ const emailServiceApp = require('../services/emailServiceApp');
 // Note: Microsoft Graph API email service using Application Permissions
 // No user authentication required - uses client credentials flow 
 exports.register = async (req, res) => {
-    const { email, password, name, role, category } = req.body;
+    const { email: rawEmail, password, name, role, category } = req.body;
+    const email = rawEmail && typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : rawEmail;
 
     try {
         // Check if user exists
     const pool = getPool();
-    const [rows] = await pool.query('SELECT id FROM user WHERE email = ?', [email]);
+    const [rows] = await pool.query('SELECT id FROM user WHERE LOWER(email) = LOWER(?)', [email]);
         if (rows.length > 0) {
             return res.status(400).json({ message: 'Email already registered' });
         }
@@ -37,6 +38,7 @@ exports.register = async (req, res) => {
     const actor = req.user && req.user.uid ? req.user.uid : null;
 
     // Insert user with audit columns (CreatedBy, UpdatedBy, IsActive). CreatedDate/UpdatedDate handled by DB defaults.
+    // store emails normalized to lower-case to avoid case-sensitivity issues
     await pool.query('INSERT INTO user (name, uid, email, password, roleId, categoryId, CreatedBy, UpdatedBy, IsActive) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [name, uid, email, hashed, roleId, categoryId, actor, actor, true]);
 
         // Send registration confirmation email using Microsoft Graph API (Application Permissions)
@@ -65,7 +67,8 @@ exports.register = async (req, res) => {
             }
 
             // Send welcome email using application permissions (no interactive auth required)
-            const loginUrl = `${process.env.APP_URL || 'http://localhost:3000'}/login`;
+            // Ensure fallback uses the requested IP:port 10.1.1.57:3001
+            const loginUrl = `${process.env.APP_URL || 'http://10.1.1.57:3001'}/login`;
             await emailServiceApp.sendWelcomeEmail(email, name || 'User', { role: roleName, categories: categoryNames, loginUrl });
             console.log(`📧 Welcome email sent successfully to ${email} from tashini.m@printcare.lk`);
 
@@ -89,12 +92,14 @@ exports.register = async (req, res) => {
 };
 
 exports.login = async (req, res) => {
-    const { email, password } = req.body;
+    const { email: rawEmail, password } = req.body;
+    const email = rawEmail && typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : rawEmail;
 
     try {
     const pool = getPool();
     // Include roleId and name in the select so we can add the user's role and name to the JWT
-    const [rows] = await pool.query('SELECT uid, password, roleId, name FROM user WHERE email = ?', [email]);
+    // Use case-insensitive match for email
+    const [rows] = await pool.query('SELECT uid, password, roleId, name FROM user WHERE LOWER(email) = LOWER(?)', [email]);
         if (rows.length === 0) {
             return res.status(400).json({ message: 'Invalid email or password' });
         }
@@ -104,7 +109,7 @@ exports.login = async (req, res) => {
         if (!match) return res.status(400).json({ message: 'Invalid email or password' });
 
         // Add roleId and name to the token payload so frontend / downstream services can use them
-        const jwtToken = jwt.sign({ uid: user.uid, email, roleId: user.roleId, name: user.name }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const jwtToken = jwt.sign({ uid: user.uid, email, roleId: user.roleId, name: user.name }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
         res.status(200).json({
             message: 'Login successful',
@@ -120,28 +125,35 @@ exports.login = async (req, res) => {
 };
 
 exports.forgotPassword = async (req, res) => {
-    const { email } = req.body;
+    const { email: rawEmail } = req.body;
+    const email = rawEmail && typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : rawEmail;
 
     try {
         if (!email) {
             return res.status(400).json({ message: 'Email is required' });
         }
+
         const pool = getPool();
         // Check if user exists and get user details
-        const [rows] = await pool.query('SELECT uid, name FROM user WHERE email = ?', [email]);
-        if (rows.length === 0) return res.status(400).json({ message: 'Email not found' });
+        const [rows] = await pool.query('SELECT uid, name FROM user WHERE LOWER(email) = LOWER(?)', [email]);
+        if (rows.length === 0) {
+            console.log(`� ForgotPassword: email not found: ${email}`);
+            return res.status(400).json({ message: 'Email not found' });
+        }
 
         const user = rows[0];
         const userName = user.name || 'User';
 
         // Generate password reset token (JWT short lived)
         const resetToken = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: '1h' });
-        const resetLink = `${process.env.APP_URL || 'http://localhost:3001'}/reset-password?token=${resetToken}`;
+        // Ensure reset link uses the requested IP:port 10.1.1.57:3001 by default
+        const resetLink = `${process.env.APP_URL || 'http://10.1.1.57:3001'}/reset-password?token=${resetToken}`;
+        console.log(`✉️  ForgotPassword: generated reset token for ${email} (len=${resetToken.length})`);
 
         try {
             // Send password reset email using Microsoft Graph API (Application Permissions)
             await emailServiceApp.sendPasswordResetEmail(email, userName, resetLink);
-            console.log(`📧 Password reset email sent successfully to ${email} from tashini.m@printcare.lk`);
+            console.log(`📧 Password reset email sent successfully to ${email}`);
         } catch (emailError) {
             console.error(`📧 Failed to send password reset email to ${email}:`, emailError.message);
             return res.status(500).json({ message: 'Failed to send password reset email', error: emailError.message });
@@ -178,12 +190,13 @@ exports.resetPassword = async (req, res) => {
         if (!email) return res.status(400).json({ message: 'Invalid token payload' });
 
     const pool = getPool();
-    const [rows] = await pool.query('SELECT id FROM user WHERE email = ?', [email]);
+    const [rows] = await pool.query('SELECT id FROM user WHERE LOWER(email) = LOWER(?)', [email]);
         if (rows.length === 0) return res.status(400).json({ message: 'User not found' });
 
         const hashed = await bcrypt.hash(password, 10);
     // When resetting via token, set UpdatedBy to the user's email (self-service reset)
-    await pool.query('UPDATE user SET password = ?, UpdatedBy = ? WHERE email = ?', [hashed, email, email]);
+    // Update using case-insensitive match and set UpdatedBy to user's email
+    await pool.query('UPDATE user SET password = ?, UpdatedBy = ? WHERE LOWER(email) = LOWER(?)', [hashed, email, email]);
 
         res.status(200).json({ message: 'Password has been reset successfully' });
     } catch (error) {

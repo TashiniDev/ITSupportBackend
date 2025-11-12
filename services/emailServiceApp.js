@@ -390,7 +390,7 @@ class EmailServiceApp {
                         </div>
 
                         <p style="text-align:center; margin:30px 0;">
-                            <a href="${process.env.APP_URL || 'http://localhost:3000'}/tickets/${ticketId}" style="background-color:#059669;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Ticket Details</a>
+                            <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/${ticketId}" style="background-color:#059669;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Ticket Details</a>
                         </p>
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
@@ -475,7 +475,7 @@ class EmailServiceApp {
                         </div>
 
                         <p style="text-align:center; margin:30px 0;">
-                            <a href="${process.env.APP_URL || 'http://localhost:3000'}/admin/tickets" style="background-color:#1e40af;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View All Tickets</a>
+                            <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/admin/tickets" style="background-color:#1e40af;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View All Tickets</a>
                         </p>
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
@@ -640,7 +640,7 @@ class EmailServiceApp {
                         </div>` : ''}
 
                         <p style="text-align:center; margin:30px 0;">
-                            <a href="${process.env.APP_URL || 'http://localhost:3000'}/tickets/${ticketId}" style="background-color:${statusColor};color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Ticket Details</a>
+                            <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/${ticketId}" style="background-color:${statusColor};color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Ticket Details</a>
                         </p>
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
@@ -708,7 +708,7 @@ class EmailServiceApp {
                         </div>
 
                         <p style="text-align:center; margin:30px 0;">
-                            <a href="${process.env.APP_URL || 'http://localhost:3000'}/tickets/${ticketId}" style="background-color:${statusColor};color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Your Ticket</a>
+                            <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/${ticketId}" style="background-color:${statusColor};color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Your Ticket</a>
                         </p>
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
@@ -729,68 +729,88 @@ class EmailServiceApp {
             const emailPromises = [];
             console.log(`📧 Starting email sending process for ticket status update...`);
 
-            // Send email to other team members in the same category
+            // Build a deduplicated list of recipients and send appropriate templates
+            const sentEmails = new Set();
+
+            // Helper to safely queue sending and avoid duplicates
+            const queueEmail = (emailData, uniqueKey) => {
+                if (!emailData || !emailData.to) return;
+                const addr = (emailData.to || '').toLowerCase().trim();
+                if (!addr) return;
+                if (sentEmails.has(addr)) {
+                    console.log(`ℹ️ Skipping duplicate notification to ${addr}`);
+                    return;
+                }
+                sentEmails.add(addr);
+                emailPromises.push(
+                    this.sendEmailAsUser(emailData).then(() => {
+                        console.log(`✅ Email sent to ${addr} (${uniqueKey || 'recipient'})`);
+                    }).catch((err) => {
+                        console.error(`❌ Failed to send email to ${addr} (${uniqueKey || 'recipient'}):`, err.message || err);
+                    })
+                );
+            };
+
+            // Send email to other team members in the same category (skip if they are the creator or IT Head)
             if (categoryTeamMembers && categoryTeamMembers.length > 0) {
-                console.log(`👥 Sending emails to ${categoryTeamMembers.length} category team members:`);
+                console.log(`� Preparing emails for ${categoryTeamMembers.length} category team members`);
                 for (const teamMember of categoryTeamMembers) {
-                    console.log(`   📤 Preparing email for ${teamMember.name} (${teamMember.email})`);
+                    const addr = (teamMember.email || '').toLowerCase().trim();
+                    if (!addr) continue;
+                    if (addr === (ticketCreatorEmail || '').toLowerCase().trim()) {
+                        console.log(`ℹ️ Skipping team member ${addr} because they are the ticket creator (creator will receive a tailored email).`);
+                        continue;
+                    }
+                    if (addr === (itHeadEmail || '').toLowerCase().trim()) {
+                        console.log(`ℹ️ Skipping team member ${addr} because they are the IT Head (IT Head will receive a separate notification).`);
+                        continue;
+                    }
+                    console.log(`   📤 Queueing status update for team member ${teamMember.name} (${addr})`);
                     const memberEmailData = {
-                        to: teamMember.email,
+                        to: addr,
                         toName: teamMember.name,
                         subject: `Ticket Status Update - ${ticketId} (${newStatus})`,
                         body: statusUpdateTemplate,
                         contentType: 'HTML'
                     };
-                    emailPromises.push(
-                        this.sendEmailAsUser(memberEmailData).then(() => {
-                            console.log(`✅ Status update email sent to team member ${teamMember.name} (${teamMember.email})`);
-                        }).catch((err) => {
-                            console.error(`❌ Failed to send email to team member ${teamMember.name} (${teamMember.email}):`, err.message);
-                        })
-                    );
+                    queueEmail(memberEmailData, `team:${addr}`);
                 }
             } else {
                 console.log(`ℹ️ No category team members to notify`);
             }
 
-            // Send email to IT Head
+            // Send email to IT Head (if not the same as creator)
             if (itHeadEmail) {
-                console.log(`👑 Sending email to IT Head: ${itHeadEmail}`);
-                const itHeadEmailData = {
-                    to: itHeadEmail,
-                    toName: 'IT Head',
-                    subject: `Ticket Status Update - ${ticketId} (${category}) - ${newStatus}`,
-                    body: statusUpdateTemplate,
-                    contentType: 'HTML'
-                };
-                emailPromises.push(
-                    this.sendEmailAsUser(itHeadEmailData).then(() => {
-                        console.log(`✅ Status update email sent to IT Head at ${itHeadEmail}`);
-                    }).catch((err) => {
-                        console.error(`❌ Failed to send email to IT Head at ${itHeadEmail}:`, err.message);
-                    })
-                );
+                const itAddr = (itHeadEmail || '').toLowerCase().trim();
+                if (itAddr) {
+                    console.log(`👑 Queueing email to IT Head: ${itAddr}`);
+                    const itHeadEmailData = {
+                        to: itAddr,
+                        toName: 'IT Head',
+                        subject: `Ticket Status Update - ${ticketId} (${category}) - ${newStatus}`,
+                        body: statusUpdateTemplate,
+                        contentType: 'HTML'
+                    };
+                    queueEmail(itHeadEmailData, 'ithead');
+                }
             } else {
                 console.log(`ℹ️ No IT Head to notify`);
             }
 
-            // Send email to ticket creator
+            // Send email to ticket creator (tailored template)
             if (ticketCreatorEmail) {
-                console.log(`📝 Sending email to ticket creator: ${ticketCreatorEmail}`);
-                const creatorEmailData = {
-                    to: ticketCreatorEmail,
-                    toName: requesterName,
-                    subject: `Your Ticket Update - ${ticketId} (${newStatus})`,
-                    body: creatorTemplate,
-                    contentType: 'HTML'
-                };
-                emailPromises.push(
-                    this.sendEmailAsUser(creatorEmailData).then(() => {
-                        console.log(`✅ Status update email sent to ticket creator at ${ticketCreatorEmail}`);
-                    }).catch((err) => {
-                        console.error(`❌ Failed to send email to ticket creator at ${ticketCreatorEmail}:`, err.message);
-                    })
-                );
+                const creatorAddr = (ticketCreatorEmail || '').toLowerCase().trim();
+                if (creatorAddr) {
+                    console.log(`📝 Queueing email to ticket creator: ${creatorAddr}`);
+                    const creatorEmailData = {
+                        to: creatorAddr,
+                        toName: requesterName,
+                        subject: `Your Ticket Update - ${ticketId} (${newStatus})`,
+                        body: creatorTemplate,
+                        contentType: 'HTML'
+                    };
+                    queueEmail(creatorEmailData, 'creator');
+                }
             } else {
                 console.log(`ℹ️ No ticket creator email to notify`);
             }
