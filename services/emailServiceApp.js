@@ -638,7 +638,7 @@ class EmailServiceApp {
             updatedDate,
             title,
             description,
-            seniority = 'LOW'
+            severityLevel = 'LOW'
         } = ticketData;
 
         // Determine status color and icon based on new status

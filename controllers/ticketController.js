@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 
+const { normalizeSeverityInput, formatSeverityForFrontend } = require('../lib/severity');
+
 /**
  * Create a new ticket with optional file attachments
  * Handles FormData from frontend with text fields and files
@@ -34,7 +36,9 @@ exports.createTicket = async (req, res) => {
         const approvalToken = crypto.randomBytes(24).toString('hex');
         const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
 
-        // Insert ticket into database (store approval token & expiry so IT Head can approve/reject via email link)
+    // Normalize severity for DB and insert ticket into database (store approval token & expiry so IT Head can approve/reject via email link)
+    const dbSeverity = normalizeSeverityInput(severityLevel);
+
         const [ticketResult] = await connection.query(
             `INSERT INTO ticket (
                 Name, ContactNumber, AssignerId, IssueId, RequestTypeId, 
@@ -54,8 +58,8 @@ exports.createTicket = async (req, res) => {
                 approvalToken,
                     tokenExpiry,
                     // SeverityLevel: prefer `severityLevel` (frontend may send this).
-                    // Normalize to upper-case DB values (frontend may send 'Low' etc.)
-                    ((severityLevel) && String((severityLevel )).trim() ? String((severityLevel)).trim().toUpperCase() : 'LOW'),
+                    // Normalize to DB enum value using helper
+                    dbSeverity,
                     createdBy
             ]
         );
@@ -187,7 +191,7 @@ exports.createTicket = async (req, res) => {
                     lastUpdated: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
                     title: ticket.fullName || fullName || '',
                     description: ticket.Description || description || 'No description provided',
-                    severityLevel: 'LOW'
+                    severityLevel: formatSeverityForFrontend(dbSeverity)
                 };
 
                 // Attach approval token so email templates can build tokenized links
@@ -350,7 +354,7 @@ exports.getTicket = async (req, res) => {
                 title: ticket.title,
                 description: ticket.description,
                 status: ticket.status,
-                severityLevel: ticket.severityLevel,
+                severityLevel: formatSeverityForFrontend(ticket.severityLevel),
                 fullName: ticket.fullName,
                 contactNumber: ticket.contactNumber,
                 department: ticket.DepartmentId ? {
@@ -549,7 +553,7 @@ exports.getAllTickets = async (req, res) => {
                 id: row.RequestTypeId,
                 name: row.requestTypeName
             } : null,
-            severityLevel: row.severityLevel,
+            severityLevel: formatSeverityForFrontend(row.severityLevel),
             status: row.status,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,

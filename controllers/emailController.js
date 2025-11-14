@@ -307,12 +307,15 @@ class EmailController {
                 });
             }
 
+            const { formatSeverityForFrontend } = require('../lib/severity');
+            const formattedSeverity = formatSeverityForFrontend(severityLevel);
+
             const templateData = {
                 to: userEmail,
                 ticketId,
                 userName,
                 title,
-                severityLevel,
+                severityLevel: formattedSeverity,
                 status,
                 comments,
                 updatedBy,
