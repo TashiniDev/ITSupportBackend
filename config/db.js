@@ -101,7 +101,7 @@ async function init() {
       \`Description\` text DEFAULT NULL,
       \`CategoryId\` int DEFAULT NULL,
       \`Status\` enum('OPEN','IN_PROGRESS','RESOLVED','CLOSED') DEFAULT 'OPEN',
-      \`SeniorityLevel\` enum('LOW','MEDIUM','HIGH','CRITICAL') DEFAULT 'LOW',
+      \`SeverityLevel\` enum('LOW','MEDIUM','HIGH','CRITICAL') DEFAULT 'LOW',
       \`CreatedBy\` varchar(150) DEFAULT NULL,
       \`CreatedDate\` datetime DEFAULT CURRENT_TIMESTAMP,
       \`UpdatedBy\` varchar(150) DEFAULT NULL,

@@ -60,7 +60,7 @@ exports.testStatusUpdateEmail = async (req, res) => {
             updatedDate: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
             title: 'Test Ticket',
             description: 'This is a test ticket for email functionality',
-            priority: 'MEDIUM'
+            severityLevel: 'MEDIUM'
         };
 
         const mockTeamMembers = [

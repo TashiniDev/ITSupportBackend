@@ -60,7 +60,7 @@ router.post('/send-template', authMiddleware, emailController.sendTemplateEmail)
  * @route   POST /api/email/ticket-notification
  * @desc    Send ticket-related notification emails
  * @access  Private (requires user authentication)
- * @body    { ticketId, userEmail, userName, title?, priority?, status?, type?, comments?, updatedBy? }
+ * @body    { ticketId, userEmail, userName, title?, severityLevel?, status?, type?, comments?, updatedBy? }
  */
 router.post('/ticket-notification', authMiddleware, emailController.sendTicketNotification);
 

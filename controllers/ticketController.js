@@ -23,8 +23,7 @@ exports.createTicket = async (req, res) => {
             assignedTo,
             issueType,
             requestType,
-            priority,
-            seniority,
+            severityLevel,
             description
         } = req.body;  
         
@@ -40,7 +39,7 @@ exports.createTicket = async (req, res) => {
             `INSERT INTO ticket (
                 Name, ContactNumber, AssignerId, IssueId, RequestTypeId, 
                 CompanyId, DepartmentId, Description, CategoryId, Status, ApprovalStatus, ApprovalToken, TokenExpiry,
-                    SeniorityLevel, CreatedBy, CreatedDate, IsActive
+                    SeverityLevel, CreatedBy, CreatedDate, IsActive
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', 'Pending', ?, ?, ?, ?, NOW(), 1)`,
             [
                 fullName,
@@ -54,9 +53,9 @@ exports.createTicket = async (req, res) => {
                 category ? parseInt(category) : null,
                 approvalToken,
                     tokenExpiry,
-                    // SeniorityLevel: prefer `seniority` (frontend may send this), fall back to `priority`.
+                    // SeverityLevel: prefer `severityLevel` (frontend may send this).
                     // Normalize to upper-case DB values (frontend may send 'Low' etc.)
-                    ((seniority || priority) && String((seniority || priority)).trim() ? String((seniority || priority)).trim().toUpperCase() : 'LOW'),
+                    ((severityLevel) && String((severityLevel )).trim() ? String((severityLevel)).trim().toUpperCase() : 'LOW'),
                     createdBy
             ]
         );
@@ -188,7 +187,7 @@ exports.createTicket = async (req, res) => {
                     lastUpdated: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
                     title: ticket.fullName || fullName || '',
                     description: ticket.Description || description || 'No description provided',
-                    priority: 'LOW'
+                    severityLevel: 'LOW'
                 };
 
                 // Attach approval token so email templates can build tokenized links
@@ -263,7 +262,7 @@ exports.getTicket = async (req, res) => {
                 t.ContactNumber as contactNumber,
                 t.Description as description,
                 t.Status as status,
-                t.SeniorityLevel as seniority,
+                t.SeverityLevel as severityLevel,
                 t.CreatedDate as createdAt,
                 t.UpdatedDate as updatedAt,
                 t.DepartmentId,
@@ -351,7 +350,7 @@ exports.getTicket = async (req, res) => {
                 title: ticket.title,
                 description: ticket.description,
                 status: ticket.status,
-                seniority: ticket.seniority,
+                severityLevel: ticket.severityLevel,
                 fullName: ticket.fullName,
                 contactNumber: ticket.contactNumber,
                 department: ticket.DepartmentId ? {
@@ -452,7 +451,7 @@ exports.getAllTickets = async (req, res) => {
         const whereClause = whereConditions.join(' AND ');
         
         // Validate and sanitize sort field
-    const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'seniority', 'fullName'];
+    const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'severityLevel', 'fullName'];
         const sortField = allowedSortFields.includes(sort) ? sort : 'createdAt';
         const sortOrder = order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
         
@@ -461,7 +460,7 @@ exports.getAllTickets = async (req, res) => {
             'createdAt': 't.CreatedDate',
             'updatedAt': 't.UpdatedDate',
             'status': 't.Status',
-            'seniority': 't.SeniorityLevel',
+            'severityLevel': 't.SeverityLevel',
             'fullName': 't.Name'
         };
         
@@ -511,7 +510,7 @@ exports.getAllTickets = async (req, res) => {
                 it.Name as issueTypeName,
                 t.RequestTypeId,
                 rt.Name as requestTypeName,
-                t.SeniorityLevel as seniority,
+                t.SeverityLevel as severityLevel,
                 t.Status as status,
                 t.CreatedDate as createdAt,
                 t.UpdatedDate as updatedAt,
@@ -550,7 +549,7 @@ exports.getAllTickets = async (req, res) => {
                 id: row.RequestTypeId,
                 name: row.requestTypeName
             } : null,
-            seniority: row.seniority,
+            severityLevel: row.severityLevel,
             status: row.status,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -647,7 +646,7 @@ exports.getMyTickets = async (req, res) => {
         const whereClause = whereConditions.join(' AND ');
         
     // Validate and sanitize sort field
-    const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'seniority', 'fullName'];
+    const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'severityLevel', 'fullName'];
     const sortField = allowedSortFields.includes(sort) ? sort : 'createdAt';
         const sortOrder = order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
         
@@ -656,7 +655,7 @@ exports.getMyTickets = async (req, res) => {
             'createdAt': 't.CreatedDate',
             'updatedAt': 't.UpdatedDate',
             'status': 't.Status',
-            'seniority': 't.SeniorityLevel',
+            'severityLevel': 't.SeverityLevel',
             'fullName': 't.Name'
         };
         
@@ -717,7 +716,7 @@ exports.getMyTickets = async (req, res) => {
                 it.Name as issueTypeName,
                 t.RequestTypeId,
                 rt.Name as requestTypeName,
-                    t.SeniorityLevel as seniority,
+                t.SeverityLevel as severityLevel,
                 t.Status as status,
                 t.CreatedDate as createdAt,
                 t.UpdatedDate as updatedAt,
@@ -757,7 +756,7 @@ exports.getMyTickets = async (req, res) => {
                 id: row.RequestTypeId,
                 name: row.requestTypeName
             } : null,
-            seniority: row.seniority,
+            severityLevel: row.severityLevel,
             status: row.status,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -907,7 +906,7 @@ exports.updateTicketStatus = async (req, res) => {
                         t.ContactNumber,
                         t.Description,
                         t.Status,
-                        t.SeniorityLevel as seniority,
+                        t.SeverityLevel as severityLevel,
                         t.CreatedDate,
                         t.UpdatedDate,
                         t.CreatedBy,
@@ -1004,7 +1003,7 @@ exports.updateTicketStatus = async (req, res) => {
                         updatedDate: ticketDetails.UpdatedDate ? new Date(ticketDetails.UpdatedDate).toLocaleDateString() + ' ' + new Date(ticketDetails.UpdatedDate).toLocaleTimeString() : 'N/A',
                         title: ticketDetails.fullName || '',
                         description: ticketDetails.Description || 'No description provided',
-                        seniority: ticketDetails.seniority || 'LOW'
+                        severityLevel: ticketDetails.severityLevel || 'LOW'
                     };
                     // include request type for notification templates
                     ticketData.requestType = ticketDetails.requestTypeName || 'N/A';
@@ -1193,7 +1192,7 @@ exports.updateTicketAssignment = async (req, res) => {
                             t.ContactNumber,
                             t.Description,
                             t.Status,
-                            t.SeniorityLevel as seniority,
+                            t.SeverityLevel as severityLevel,
                             t.CreatedDate,
                             d.Name as departmentName,
                             comp.Name as companyName,
@@ -1230,7 +1229,7 @@ exports.updateTicketAssignment = async (req, res) => {
                                 <h3>Ticket Details:</h3>
                                 <p><strong>Category:</strong> ${ticketDetails.categoryName || 'N/A'}</p>
                                 <p><strong>Requester:</strong> ${ticketDetails.fullName || 'N/A'}</p>
-                                <p><strong>Seniority:</strong> ${ticketDetails.seniority || 'N/A'}</p>
+                                <p><strong>Severity Level:</strong> ${ticketDetails.severityLevel || 'N/A'}</p>
                                 <p><strong>Description:</strong> ${ticketDetails.Description || 'No description provided'}</p>
                                 ${attachmentCount > 0 ? `<p><strong>Attachments:</strong> ${attachmentCount} file(s)</p>` : ''}
                             </div>

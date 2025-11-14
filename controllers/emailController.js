@@ -292,7 +292,7 @@ class EmailController {
                 userEmail, 
                 userName, 
                 title, 
-                priority, 
+                severityLevel, 
                 status, 
                 type = 'ticket-created',
                 comments,
@@ -312,7 +312,7 @@ class EmailController {
                 ticketId,
                 userName,
                 title,
-                priority,
+                severityLevel,
                 status,
                 comments,
                 updatedBy,
@@ -388,7 +388,7 @@ class EmailController {
                 {
                     name: 'ticket-created',
                     description: 'Email sent when a new support ticket is created',
-                    requiredFields: ['ticketId', 'userName', 'title', 'priority', 'status']
+                    requiredFields: ['ticketId', 'userName', 'title', 'severityLevel', 'status']
                 },
                 {
                     name: 'ticket-updated',

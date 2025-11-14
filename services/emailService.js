@@ -241,7 +241,7 @@ class EmailService {
                             <h3 style="margin-top: 0; color: #495057;">Ticket Details:</h3>
                             <p><strong>Ticket ID:</strong> #${data.ticketId || 'N/A'}</p>
                             <p><strong>Title:</strong> ${data.title || 'N/A'}</p>
-                            <p><strong>Priority:</strong> ${data.priority || 'N/A'}</p>
+                            <p><strong>Severity Level:</strong> ${data.severityLevel || 'N/A'}</p>
                             <p><strong>Status:</strong> ${data.status || 'Open'}</p>
                             <p><strong>Created:</strong> ${data.createdAt || new Date().toLocaleString()}</p>
                         </div>

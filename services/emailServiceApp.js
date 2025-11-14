@@ -342,7 +342,7 @@ class EmailServiceApp {
             lastUpdated,
             title,
             description,
-            seniority = 'LOW'
+            severityLevel
         } = ticketData;
 
     // Normalize presence checks: treat 'N/A' (case-insensitive) as not provided
@@ -378,7 +378,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; color:#065f46;">
                                 <div><strong>Ticket ID:</strong> ${ticketId}</div>
                                 <div><strong>Category:</strong> ${category}</div>
-                                <div><strong>Seniority:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${seniority}</span></div>
+                                <div><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${severityLevel}</span></div>
                                 ${hasRequestType ? `                                <div><strong>Request Type:</strong> ${ticketData.requestType}</div>` : (hasIssueType ? `                                <div><strong>Issue Type:</strong> ${issueType}</div>` : '')}
                                 <div><strong>Assigned Team:</strong> ${assignedTeam}</div>
                                 <div><strong>Assigned To:</strong> ${assignedTo}</div>
@@ -479,7 +479,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; color:#1e40af;">
                                 <div><strong>Ticket ID:</strong> ${ticketId}</div>
                                 <div><strong>Category:</strong> ${category}</div>
-                                <div><strong>Seniority:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${seniority}</span></div>
+                                <div><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${severityLevel}</span></div>
                                 ${hasRequestType ? `                                <div><strong>Request Type:</strong> ${ticketData.requestType}</div>` : (hasIssueType ? `                                <div><strong>Issue Type:</strong> ${issueType}</div>` : '')}
                                 <div><strong>Assigned Team:</strong> ${assignedTeam}</div>
                                 <div><strong>Assigned To:</strong> ${assignedTo}</div>
@@ -684,12 +684,11 @@ class EmailServiceApp {
                                 <div><strong>Ticket ID:</strong> ${ticketId}</div>
                                 <div><strong>Category:</strong> ${category}</div>
                                 <div><strong>Status:</strong> <span style="background:${statusColor}22; color:${statusColor}; padding:2px 8px; border-radius:4px; font-size:12px;">${newStatus}</span></div>
-                                <div><strong>Seniority:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${seniority}</span></div>
+                                <div><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${severityLevel}</span></div>
                                 ${ticketData.requestType && String(ticketData.requestType).trim().toLowerCase() !== 'n/a' ? `                                <div><strong>Request Type:</strong> ${ticketData.requestType}</div>` : (issueType && String(issueType).trim().toLowerCase() !== 'n/a' ? `                                <div><strong>Issue Type:</strong> ${issueType}</div>` : '')}
                                 <div><strong>Assigned To:</strong> ${assignedTo}</div>
                             </div>
                         </div>
-
                         <div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
                             <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px; display:flex; align-items:center; gap:8px;">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
