@@ -1,6 +1,7 @@
 const { getPool } = require('../config/db');
 const path = require('path');
 const fs = require('fs').promises;
+const crypto = require('crypto');
 
 /**
  * Create a new ticket with optional file attachments
@@ -23,19 +24,24 @@ exports.createTicket = async (req, res) => {
             issueType,
             requestType,
             priority,
+            seniority,
             description
         } = req.body;  
         
-        // Get user info from auth middleware
-        const createdBy = req.user?.name || req.user?.email || 'System';
+        // Get user info from auth middleware. Prefer storing uid in CreatedBy when available
+        const createdBy = req.user?.uid || req.user?.email || req.user?.name || 'System';
         
-        // Insert ticket into database
+        // Generate an approval token (used in email links) and expiry (24 hours)
+        const approvalToken = crypto.randomBytes(24).toString('hex');
+        const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+        // Insert ticket into database (store approval token & expiry so IT Head can approve/reject via email link)
         const [ticketResult] = await connection.query(
             `INSERT INTO ticket (
                 Name, ContactNumber, AssignerId, IssueId, RequestTypeId, 
-                CompanyId, DepartmentId, Description, CategoryId, Status, 
-                SeniorityLevel, CreatedBy, CreatedDate, IsActive
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', 'LOW', ?, NOW(), 1)`,
+                CompanyId, DepartmentId, Description, CategoryId, Status, ApprovalStatus, ApprovalToken, TokenExpiry,
+                    SeniorityLevel, CreatedBy, CreatedDate, IsActive
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', 'Pending', ?, ?, ?, ?, NOW(), 1)`,
             [
                 fullName,
                 contactNumber || null,
@@ -46,7 +52,12 @@ exports.createTicket = async (req, res) => {
                 department ? parseInt(department) : null,
                 description,
                 category ? parseInt(category) : null,
-                createdBy
+                approvalToken,
+                    tokenExpiry,
+                    // SeniorityLevel: prefer `seniority` (frontend may send this), fall back to `priority`.
+                    // Normalize to upper-case DB values (frontend may send 'Low' etc.)
+                    ((seniority || priority) && String((seniority || priority)).trim() ? String((seniority || priority)).trim().toUpperCase() : 'LOW'),
+                    createdBy
             ]
         );
         
@@ -109,10 +120,29 @@ exports.createTicket = async (req, res) => {
                 AND u.roleId = 3
                 LIMIT 1
             `;
-            
+
+            // Get ticket creator email (robust: try uid -> email raw value -> name)
+            let creatorEmail = null;
             const [categoryTeamUsers] = await connection.query(categoryTeamQuery, [category ? parseInt(category) : null]);
             const [itHeadUsers] = await connection.query(itHeadQuery);
             
+            try {
+                // If createdBy looks like a uid, try to resolve user by uid
+                if (createdBy && createdBy.toString().length > 0) {
+                    // attempt by uid
+                    const [creatorByUid] = await connection.query(`SELECT email, name FROM user WHERE uid = ? AND IsActive = 1 LIMIT 1`, [createdBy]);
+                    if (creatorByUid && creatorByUid.length > 0 && creatorByUid[0].email) {
+                        creatorEmail = creatorByUid[0].email;
+                    }
+                }
+                // If not found and createdBy contains an @, assume it's an email string stored in CreatedBy
+                if (!creatorEmail && createdBy && typeof createdBy === 'string' && createdBy.includes('@')) {
+                    creatorEmail = createdBy;
+                }
+            } catch (e) {
+                console.error('Error resolving creator email during ticket creation', e.message);
+            }
+
             if (categoryTeamUsers.length > 0 || itHeadUsers.length > 0) {
                 // Generate ticket number for email
                 const ticketNumber = `TK-${new Date().getFullYear()}-${String(ticketId).padStart(3, '0')}`;
@@ -151,6 +181,7 @@ exports.createTicket = async (req, res) => {
                     requesterDepartment: ticket.departmentName || 'N/A',
                     requesterCompany: ticket.companyName || 'N/A',
                     issueType: ticket.issueTypeName || 'N/A',
+                    requestType: ticket.requestTypeName || 'N/A',
                     assignedTo: ticket.assignedToName || 'Unassigned',
                     assignedDate: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
                     createdDate: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
@@ -159,14 +190,19 @@ exports.createTicket = async (req, res) => {
                     description: ticket.Description || description || 'No description provided',
                     priority: 'LOW'
                 };
+
+                // Attach approval token so email templates can build tokenized links
+                ticketData.approvalToken = approvalToken;
+                ticketData.tokenExpiry = tokenExpiry;
                 
                 // Get IT Head email
                 const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
-                
+
                 // Send ticket creation email using Microsoft Graph API
+                // Notify category team members, the ticket creator, and the IT Head. The IT Head template contains approve/reject buttons.
                 try {
-                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail);
-                    console.log(`📧 Ticket creation emails sent successfully for ticket ${ticketNumber}`);
+                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, creatorEmail);
+                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, creator)`);
                 } catch (emailError) {
                     console.error(`📧 Failed to send ticket creation emails:`, emailError.message);
                     // Don't fail the ticket creation if email fails
@@ -217,7 +253,7 @@ exports.getTicket = async (req, res) => {
         
         const pool = getPool();
         
-        // Get ticket details with joined related data
+        // Get ticket details with joined related data, including approval/action info
         const [ticketRows] = await pool.query(
             `SELECT 
                 t.Id as id,
@@ -227,7 +263,7 @@ exports.getTicket = async (req, res) => {
                 t.ContactNumber as contactNumber,
                 t.Description as description,
                 t.Status as status,
-                t.SeniorityLevel as priority,
+                t.SeniorityLevel as seniority,
                 t.CreatedDate as createdAt,
                 t.UpdatedDate as updatedAt,
                 t.DepartmentId,
@@ -242,7 +278,12 @@ exports.getTicket = async (req, res) => {
                 rt.Name as requestTypeName,
                 t.AssignerId,
                 u.Name as assignedToName,
-                t.UpdatedDate as assignedAt
+                t.UpdatedDate as assignedAt,
+                t.ApprovalStatus,
+                t.ActionedBy,
+                t.ActionedDate,
+                t.ActionComments,
+                actionUser.Name as actionedByName
              FROM ticket t
              LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
              LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
@@ -250,6 +291,7 @@ exports.getTicket = async (req, res) => {
              LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
              LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
              LEFT JOIN user u ON t.AssignerId = u.Id AND u.IsActive = 1
+             LEFT JOIN user actionUser ON t.ActionedBy = actionUser.Id AND actionUser.IsActive = 1
              WHERE t.Id = ? AND t.IsActive = 1`,
             [parseInt(ticketId)]
         );
@@ -309,7 +351,7 @@ exports.getTicket = async (req, res) => {
                 title: ticket.title,
                 description: ticket.description,
                 status: ticket.status,
-                priority: ticket.priority,
+                seniority: ticket.seniority,
                 fullName: ticket.fullName,
                 contactNumber: ticket.contactNumber,
                 department: ticket.DepartmentId ? {
@@ -339,6 +381,15 @@ exports.getTicket = async (req, res) => {
                 assignedAt: ticket.assignedAt,
                 createdAt: ticket.createdAt,
                 updatedAt: ticket.updatedAt,
+                approval: {
+                    status: ticket.ApprovalStatus || 'Pending',
+                    actionedBy: ticket.ActionedBy ? {
+                        id: ticket.ActionedBy,
+                        name: ticket.actionedByName || null
+                    } : null,
+                    actionedDate: ticket.ActionedDate || null,
+                    comments: ticket.ActionComments || null
+                },
                 attachments: attachments
             }
         };
@@ -401,7 +452,7 @@ exports.getAllTickets = async (req, res) => {
         const whereClause = whereConditions.join(' AND ');
         
         // Validate and sanitize sort field
-        const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'priority', 'fullName'];
+    const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'seniority', 'fullName'];
         const sortField = allowedSortFields.includes(sort) ? sort : 'createdAt';
         const sortOrder = order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
         
@@ -410,7 +461,7 @@ exports.getAllTickets = async (req, res) => {
             'createdAt': 't.CreatedDate',
             'updatedAt': 't.UpdatedDate',
             'status': 't.Status',
-            'priority': 't.SeniorityLevel',
+            'seniority': 't.SeniorityLevel',
             'fullName': 't.Name'
         };
         
@@ -460,7 +511,7 @@ exports.getAllTickets = async (req, res) => {
                 it.Name as issueTypeName,
                 t.RequestTypeId,
                 rt.Name as requestTypeName,
-                t.SeniorityLevel as priority,
+                t.SeniorityLevel as seniority,
                 t.Status as status,
                 t.CreatedDate as createdAt,
                 t.UpdatedDate as updatedAt,
@@ -499,7 +550,7 @@ exports.getAllTickets = async (req, res) => {
                 id: row.RequestTypeId,
                 name: row.requestTypeName
             } : null,
-            priority: row.priority,
+            seniority: row.seniority,
             status: row.status,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -595,9 +646,9 @@ exports.getMyTickets = async (req, res) => {
         
         const whereClause = whereConditions.join(' AND ');
         
-        // Validate and sanitize sort field
-        const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'priority', 'fullName'];
-        const sortField = allowedSortFields.includes(sort) ? sort : 'createdAt';
+    // Validate and sanitize sort field
+    const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'seniority', 'fullName'];
+    const sortField = allowedSortFields.includes(sort) ? sort : 'createdAt';
         const sortOrder = order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
         
         // Map sort fields to actual column names
@@ -605,7 +656,7 @@ exports.getMyTickets = async (req, res) => {
             'createdAt': 't.CreatedDate',
             'updatedAt': 't.UpdatedDate',
             'status': 't.Status',
-            'priority': 't.SeniorityLevel',
+            'seniority': 't.SeniorityLevel',
             'fullName': 't.Name'
         };
         
@@ -666,7 +717,7 @@ exports.getMyTickets = async (req, res) => {
                 it.Name as issueTypeName,
                 t.RequestTypeId,
                 rt.Name as requestTypeName,
-                t.SeniorityLevel as priority,
+                    t.SeniorityLevel as seniority,
                 t.Status as status,
                 t.CreatedDate as createdAt,
                 t.UpdatedDate as updatedAt,
@@ -706,7 +757,7 @@ exports.getMyTickets = async (req, res) => {
                 id: row.RequestTypeId,
                 name: row.requestTypeName
             } : null,
-            priority: row.priority,
+            seniority: row.seniority,
             status: row.status,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -856,7 +907,7 @@ exports.updateTicketStatus = async (req, res) => {
                         t.ContactNumber,
                         t.Description,
                         t.Status,
-                        t.SeniorityLevel as priority,
+                        t.SeniorityLevel as seniority,
                         t.CreatedDate,
                         t.UpdatedDate,
                         t.CreatedBy,
@@ -892,10 +943,12 @@ exports.updateTicketStatus = async (req, res) => {
                         AND u.categoryId = ?
                     `, [ticketDetails.CategoryId]);
                     
-                    // Filter out the current user if they are in the same category (to avoid self-notification)
-                    const filteredTeamUsers = categoryTeamUsers.filter(user => 
-                        user.email !== (req.user?.email || '')
-                    );
+                    // Filter out the current user for PROCESSING notifications to avoid self-notification.
+                    // For COMPLETED notifications we want to notify all ticket relaters, so do not exclude the current user.
+                    const filteredTeamUsers = categoryTeamUsers.filter(user => {
+                        if (newStatus === 'COMPLETED') return true;
+                        return user.email !== (req.user?.email || '');
+                    });
                     
                     console.log(`👥 Total category team members: ${categoryTeamUsers.length}`);
                     console.log(`👥 Filtered team members (excluding current user): ${filteredTeamUsers.length}`);
@@ -912,16 +965,25 @@ exports.updateTicketStatus = async (req, res) => {
                     
                     console.log(`👑 IT Head found: ${itHeadUsers.length > 0 ? itHeadUsers[0].email : 'None'}`);
                     
-                    // Get ticket creator email (try to find in users table first, fallback to CreatedBy field)
+                    // Get ticket creator email (robust: try user.email OR user.id match, fallback to CreatedBy raw value if it's an email)
                     let ticketCreatorEmail = null;
+                    // determine possible numeric id
+                    const possibleCreatorId = Number.isInteger(Number(ticketDetails.CreatedBy)) ? Number(ticketDetails.CreatedBy) : null;
+                    // Try several ways to resolve the creator to an active user record: by email, numeric Id, uid, or name
                     const [creatorUsers] = await pool.query(`
                         SELECT email FROM user 
-                        WHERE email = ? AND IsActive = 1
-                    `, [ticketDetails.CreatedBy]);
-                    
-                    if (creatorUsers.length > 0) {
+                        WHERE IsActive = 1 AND (
+                            email = ? OR 
+                            Id = ? OR 
+                            uid = ? OR
+                            Name = ?
+                        )
+                        LIMIT 1
+                    `, [ticketDetails.CreatedBy, possibleCreatorId, ticketDetails.CreatedBy, ticketDetails.CreatedBy]);
+
+                    if (creatorUsers.length > 0 && creatorUsers[0].email) {
                         ticketCreatorEmail = creatorUsers[0].email;
-                    } else if (ticketDetails.CreatedBy && ticketDetails.CreatedBy.includes('@')) {
+                    } else if (ticketDetails.CreatedBy && String(ticketDetails.CreatedBy).includes('@')) {
                         ticketCreatorEmail = ticketDetails.CreatedBy;
                     }
                     
@@ -942,8 +1004,10 @@ exports.updateTicketStatus = async (req, res) => {
                         updatedDate: ticketDetails.UpdatedDate ? new Date(ticketDetails.UpdatedDate).toLocaleDateString() + ' ' + new Date(ticketDetails.UpdatedDate).toLocaleTimeString() : 'N/A',
                         title: ticketDetails.fullName || '',
                         description: ticketDetails.Description || 'No description provided',
-                        priority: ticketDetails.priority || 'LOW'
+                        seniority: ticketDetails.seniority || 'LOW'
                     };
+                    // include request type for notification templates
+                    ticketData.requestType = ticketDetails.requestTypeName || 'N/A';
                     
                     const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
                     
@@ -1129,7 +1193,7 @@ exports.updateTicketAssignment = async (req, res) => {
                             t.ContactNumber,
                             t.Description,
                             t.Status,
-                            t.SeniorityLevel as priority,
+                            t.SeniorityLevel as seniority,
                             t.CreatedDate,
                             d.Name as departmentName,
                             comp.Name as companyName,
@@ -1166,7 +1230,7 @@ exports.updateTicketAssignment = async (req, res) => {
                                 <h3>Ticket Details:</h3>
                                 <p><strong>Category:</strong> ${ticketDetails.categoryName || 'N/A'}</p>
                                 <p><strong>Requester:</strong> ${ticketDetails.fullName || 'N/A'}</p>
-                                <p><strong>Priority:</strong> ${ticketDetails.priority || 'N/A'}</p>
+                                <p><strong>Seniority:</strong> ${ticketDetails.seniority || 'N/A'}</p>
                                 <p><strong>Description:</strong> ${ticketDetails.Description || 'No description provided'}</p>
                                 ${attachmentCount > 0 ? `<p><strong>Attachments:</strong> ${attachmentCount} file(s)</p>` : ''}
                             </div>
@@ -1263,8 +1327,8 @@ exports.addComment = async (req, res) => {
         const currentTicket = ticketRows[0];
         const shouldUpdateStatus = currentTicket.Status === 'NEW';
         
-        // Get user info from auth middleware
-        const createdBy = req.user?.name || req.user?.email || 'System';
+    // Get user info from auth middleware. Prefer storing uid when available
+    const createdBy = req.user?.uid || req.user?.email || req.user?.name || 'System';
         
         // Get user ID from auth middleware (assuming req.user has id property)
         const userId = req.user?.id || null;
@@ -1478,5 +1542,476 @@ exports.bulkUpdateTicketsWithCommentsToProcessing = async (req, res) => {
             message: 'Error updating ticket statuses',
             error: error.message
         });
+    }
+};
+
+/**
+ * Approve a ticket (IT Head only)
+ */
+exports.approveTicket = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { comments } = req.body;
+        const approvedBy = req.user?.uid;
+        const approverName = req.user?.name || 'IT Head';
+
+        const wantsHtml = (req.headers && req.headers.accept && req.headers.accept.includes('text/html')) || (req.is && req.is('application/x-www-form-urlencoded'));
+
+        if (!id) {
+            const msg = 'Ticket ID is required';
+            if (wantsHtml) return res.status(400).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(400).json({ message: msg });
+        }
+
+        const pool = getPool();
+
+        // Get ticket details
+        const [ticketRows] = await pool.query(`
+            SELECT t.*, u.email as creatorEmail, u.name as creatorName,
+                   c.Name as categoryName
+            FROM ticket t
+            LEFT JOIN user u ON t.CreatedBy = u.uid
+            LEFT JOIN category c ON t.CategoryId = c.Id
+            WHERE t.Id = ? AND t.IsActive = 1
+        `, [id]);
+
+        if (ticketRows.length === 0) {
+            const msg = 'Ticket not found';
+            if (wantsHtml) return res.status(404).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(404).json({ message: msg });
+        }
+
+        const ticket = ticketRows[0];
+
+        // Allow approval if user is IT Head OR a valid token is provided via query string
+        let tokenValidated = false;
+        if (req.user?.roleId === 3) {
+            // authenticated IT Head
+        } else if (req.query && req.query.token) {
+            const providedToken = req.query.token;
+            // Validate token and expiry
+            if (!ticket.ApprovalToken || ticket.ApprovalToken !== providedToken) {
+                const msg = 'Invalid or expired approval token';
+                if (wantsHtml) return res.status(403).send(`<html><body><h3>${msg}</h3></body></html>`);
+                return res.status(403).json({ message: msg });
+            }
+            const expiry = ticket.TokenExpiry ? new Date(ticket.TokenExpiry) : null;
+            if (!expiry || expiry < new Date()) {
+                const msg = 'Approval token expired';
+                if (wantsHtml) return res.status(403).send(`<html><body><h3>${msg}</h3></body></html>`);
+                return res.status(403).json({ message: msg });
+            }
+            tokenValidated = true;
+        } else {
+            const msg = 'Only IT Head can approve tickets';
+            if (wantsHtml) return res.status(403).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(403).json({ message: msg });
+        }
+
+        // Determine final approver id and name
+        let finalApprovedById = null;
+        let finalApproverName = 'IT Head';
+
+        if (req.user?.roleId === 3) {
+            // authenticated IT Head
+            finalApprovedById = req.user?.id || null;
+            finalApproverName = req.user?.name || req.user?.email || 'IT Head';
+        } else if (tokenValidated) {
+            // Token-approved via email link — set ActionedBy to the primary IT Head user if available
+            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 LIMIT 1`);
+            if (itHeadRows && itHeadRows.length > 0) {
+                finalApprovedById = itHeadRows[0].Id;
+                finalApproverName = itHeadRows[0].Name || 'IT Head';
+            } else {
+                finalApprovedById = null;
+                finalApproverName = 'IT Head (email link)';
+            }
+        }
+
+        // Update ticket approval fields to reflect approval
+        await pool.query(`
+            UPDATE ticket
+            SET ApprovalStatus = 'Approved', ActionedBy = ?, ActionedDate = NOW(), ActionComments = ?, ApprovalToken = NULL, TokenExpiry = NULL, UpdatedBy = ?, UpdatedDate = NOW()
+            WHERE Id = ?
+        `, [finalApprovedById, comments || null, finalApproverName, id]);
+
+        // Notify all relevant parties (creator, assigned user, category team, IT Head)
+        try {
+            const emailServiceApp = require('../services/emailServiceApp');
+            const pool = getPool();
+
+            // Get latest ticket details with related info
+            const [detailsRows] = await pool.query(`
+                SELECT 
+                    t.Id,
+                    CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
+                    t.Name as fullName,
+                    t.ContactNumber,
+                    t.Description,
+                    t.CreatedDate,
+                    t.CategoryId,
+                    c.Name as categoryName,
+                    t.AssignerId,
+                    au.email as assignerEmail,
+                    au.Name as assignerName,
+                    cu.email as creatorEmail,
+                    cu.Name as creatorName,
+                    t.CreatedBy as createdByRaw,
+                    d.Name as departmentName,
+                    comp.Name as companyName,
+                    it.Name as issueTypeName,
+                    rt.Name as requestTypeName
+                FROM ticket t
+                LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
+                LEFT JOIN user au ON t.AssignerId = au.Id AND au.IsActive = 1
+                LEFT JOIN user cu ON t.CreatedBy = cu.uid AND cu.IsActive = 1
+                LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
+                LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
+                LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
+                LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
+                WHERE t.Id = ?
+            `, [id]);
+
+            const info = detailsRows[0] || {};
+            const ticketNumber = info.ticketNumber || `TK-${new Date().getFullYear()}-${String(id).padStart(3, '0')}`;
+
+            const ticketData = {
+                ticketId: ticketNumber,
+                category: info.categoryName || 'General',
+                assignedTeam: info.categoryName || 'General',
+                requesterName: info.fullName || ticket.creatorName || 'User',
+                requesterContact: info.ContactNumber || info.ContactNumber || 'N/A',
+                requesterDepartment: info.departmentName || 'N/A',
+                requesterCompany: info.companyName || 'N/A',
+                    issueType: info.issueTypeName || 'N/A',
+                    requestType: info.requestTypeName || 'N/A',
+                assignedTo: info.assignerName || 'Unassigned',
+                createdDate: info.CreatedDate,
+                description: info.Description || '',
+                approverName: finalApproverName,
+                approvalComments: comments || ''
+            };
+
+            // Resolve creator email robustly (try joined user, then raw CreatedBy if it contains an email, else try lookup by uid/email/name)
+            let resolvedCreatorEmail = info.creatorEmail || null;
+            let resolvedCreatorName = info.creatorName || null;
+            try {
+                if (!resolvedCreatorEmail && info.createdByRaw) {
+                    if (typeof info.createdByRaw === 'string' && info.createdByRaw.includes('@')) {
+                        resolvedCreatorEmail = info.createdByRaw;
+                        resolvedCreatorName = info.fullName || resolvedCreatorName || 'Creator';
+                    } else {
+                        // Try to find the user by uid or email or name
+                        const [found] = await pool.query(`SELECT email, name FROM user WHERE (uid = ? OR email = ? OR name = ?) AND IsActive = 1 LIMIT 1`, [info.createdByRaw, info.createdByRaw, info.createdByRaw]);
+                        if (found && found.length > 0 && found[0].email) {
+                            resolvedCreatorEmail = found[0].email;
+                            resolvedCreatorName = found[0].name || resolvedCreatorName;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Error resolving creator email for approval notifications', e.message);
+            }
+
+            // Collect recipients (deduplicated)
+            // Notify assignee, category team members, IT Head(s), and the ticket creator (resolvedCreatorEmail)
+            const recipientsMap = new Map();
+            if (resolvedCreatorEmail) recipientsMap.set((resolvedCreatorEmail || '').toLowerCase(), { email: resolvedCreatorEmail, name: resolvedCreatorName || info.fullName || 'Creator' });
+            if (info.assignerEmail) recipientsMap.set((info.assignerEmail || '').toLowerCase(), { email: info.assignerEmail, name: info.assignerName || 'Assignee' });
+
+            // Category team members
+            if (info.CategoryId) {
+                try {
+                    const [team] = await pool.query(`SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.categoryId = ?`, [info.CategoryId]);
+                    for (const m of team) {
+                        if (m && m.email) recipientsMap.set(m.email.toLowerCase(), { email: m.email, name: m.name });
+                    }
+                } catch (e) {
+                    console.error('Error fetching category team members for approval notifications', e.message);
+                }
+            }
+
+            // IT Head(s)
+            try {
+                const [heads] = await pool.query(`SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3`);
+                for (const h of heads) {
+                    if (h && h.email) recipientsMap.set(h.email.toLowerCase(), { email: h.email, name: h.name || 'IT Head' });
+                }
+            } catch (e) {
+                console.error('Error fetching IT Head recipients for approval notifications', e.message);
+            }
+
+            // Send approval email to each recipient (avoid duplicates)
+            for (const [, r] of recipientsMap) {
+                try {
+                    await emailServiceApp.sendTicketApprovalEmail(ticketData, r.email, r.name || r.email, finalApproverName, comments || '');
+                    console.log(`📧 Approval notification sent to ${r.email}`);
+                } catch (e) {
+                    console.error(`Error sending approval notification to ${r.email}:`, e.message);
+                }
+            }
+
+        } catch (emailError) {
+            console.error('Error sending approval notifications:', emailError.message);
+        }
+
+        // If request is from the HTML confirmation form, return a friendly HTML page
+        if (wantsHtml) {
+            const ticketNumber = `TK-${new Date().getFullYear()}-${String(id).padStart(3, '0')}`;
+            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket Approved</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;background:#f8fafc;"><div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;"><h2 style="color:#065f46;">This ticket has been approved</h2><p>Ticket <strong>${ticketNumber}</strong> was approved by <strong>${finalApproverName}</strong>.</p>${comments ? `<p><strong>Comments:</strong> ${comments}</p>` : ''}<p style="color:#64748b;margin-top:12px;">You can close this window.</p></div></body></html>`;
+            return res.status(200).send(html);
+        }
+
+        res.status(200).json({
+            message: 'Ticket approved successfully',
+            data: {
+                ticketId: id,
+                status: 'APPROVED',
+                approvedBy: finalApproverName,
+                approvalDate: new Date().toISOString(),
+                comments: comments || null
+            }
+        });
+
+    } catch (error) {
+        console.error('Error approving ticket:', error);
+        res.status(500).json({ message: 'Error approving ticket', error: error.message });
+    }
+};
+
+/**
+ * Reject a ticket (IT Head only)
+ */
+exports.rejectTicket = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { reason } = req.body;
+        const rejectedBy = req.user?.uid;
+        const rejectorName = req.user?.name || 'IT Head';
+
+        const wantsHtml = (req.headers && req.headers.accept && req.headers.accept.includes('text/html')) || (req.is && req.is('application/x-www-form-urlencoded'));
+
+        if (!id) {
+            const msg = 'Ticket ID is required';
+            if (wantsHtml) return res.status(400).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(400).json({ message: msg });
+        }
+
+        if (!reason) {
+            const msg = 'Rejection reason is required';
+            if (wantsHtml) return res.status(400).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(400).json({ message: msg });
+        }
+
+        const pool = getPool();
+
+        // Get ticket details
+        const [ticketRows] = await pool.query(`
+            SELECT t.*, u.email as creatorEmail, u.name as creatorName,
+                   c.Name as categoryName
+            FROM ticket t
+            LEFT JOIN user u ON t.CreatedBy = u.uid
+            LEFT JOIN category c ON t.CategoryId = c.Id
+            WHERE t.Id = ? AND t.IsActive = 1
+        `, [id]);
+
+        if (ticketRows.length === 0) {
+            const msg = 'Ticket not found';
+            if (wantsHtml) return res.status(404).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(404).json({ message: msg });
+        }
+
+        const ticket = ticketRows[0];
+
+        // Allow rejection if user is IT Head OR a valid token is provided via query string
+        let tokenValidated = false;
+        if (req.user?.roleId === 3) {
+            // authenticated IT Head
+        } else if (req.query && req.query.token) {
+            const providedToken = req.query.token;
+            // Validate token and expiry
+            if (!ticket.ApprovalToken || ticket.ApprovalToken !== providedToken) {
+                const msg = 'Invalid or expired approval token';
+                if (wantsHtml) return res.status(403).send(`<html><body><h3>${msg}</h3></body></html>`);
+                return res.status(403).json({ message: msg });
+            }
+            const expiry = ticket.TokenExpiry ? new Date(ticket.TokenExpiry) : null;
+            if (!expiry || expiry < new Date()) {
+                const msg = 'Approval token expired';
+                if (wantsHtml) return res.status(403).send(`<html><body><h3>${msg}</h3></body></html>`);
+                return res.status(403).json({ message: msg });
+            }
+            tokenValidated = true;
+        } else {
+            const msg = 'Only IT Head can reject tickets';
+            if (wantsHtml) return res.status(403).send(`<html><body><h3>${msg}</h3></body></html>`);
+            return res.status(403).json({ message: msg });
+        }
+
+        // Determine final rejector id and name
+        let finalRejectedById = null;
+        let finalRejectorName = 'IT Head';
+
+        if (req.user?.roleId === 3) {
+            finalRejectedById = req.user?.id || null;
+            finalRejectorName = req.user?.name || req.user?.email || 'IT Head';
+        } else if (tokenValidated) {
+            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 LIMIT 1`);
+            if (itHeadRows && itHeadRows.length > 0) {
+                finalRejectedById = itHeadRows[0].Id;
+                finalRejectorName = itHeadRows[0].Name || 'IT Head';
+            } else {
+                finalRejectedById = null;
+                finalRejectorName = 'IT Head (email link)';
+            }
+        }
+
+        // Update ticket approval fields to reflect rejection
+        await pool.query(`
+            UPDATE ticket
+            SET ApprovalStatus = 'Rejected', ActionedBy = ?, ActionedDate = NOW(), ActionComments = ?, ApprovalToken = NULL, TokenExpiry = NULL, UpdatedBy = ?, UpdatedDate = NOW()
+            WHERE Id = ?
+        `, [finalRejectedById, reason || null, finalRejectorName, id]);
+
+        // Notify all relevant parties (creator, assigned user, category team, IT Head) about rejection
+        try {
+            const emailServiceApp = require('../services/emailServiceApp');
+            const pool = getPool();
+
+            // Get latest ticket details with related info
+            const [detailsRows] = await pool.query(`
+                SELECT 
+                    t.Id,
+                    CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
+                    t.Name as fullName,
+                    t.ContactNumber,
+                    t.Description,
+                    t.CreatedDate,
+                    t.CategoryId,
+                    c.Name as categoryName,
+                    t.AssignerId,
+                    au.email as assignerEmail,
+                    au.Name as assignerName,
+                    cu.email as creatorEmail,
+                    cu.Name as creatorName,
+                    d.Name as departmentName,
+                    comp.Name as companyName,
+                    it.Name as issueTypeName,
+                    rt.Name as requestTypeName
+                FROM ticket t
+                LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
+                LEFT JOIN user au ON t.AssignerId = au.Id AND au.IsActive = 1
+                LEFT JOIN user cu ON t.CreatedBy = cu.uid AND cu.IsActive = 1
+                , t.CreatedBy as createdByRaw
+                LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
+                LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
+                LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
+                LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
+                WHERE t.Id = ?
+            `, [id]);
+
+            const info = detailsRows[0] || {};
+            const ticketNumber = info.ticketNumber || `TK-${new Date().getFullYear()}-${String(id).padStart(3, '0')}`;
+
+            const ticketData = {
+                ticketId: ticketNumber,
+                category: info.categoryName || 'General',
+                assignedTeam: info.categoryName || 'General',
+                requesterName: info.fullName || ticket.creatorName || 'User',
+                requesterContact: info.ContactNumber || 'N/A',
+                requesterDepartment: info.departmentName || 'N/A',
+                requesterCompany: info.companyName || 'N/A',
+                    issueType: info.issueTypeName || 'N/A',
+                    requestType: info.requestTypeName || 'N/A',
+                assignedTo: info.assignerName || 'Unassigned',
+                createdDate: info.CreatedDate,
+                description: info.Description || '',
+                rejectorName: finalRejectorName,
+                rejectionReason: reason || ''
+            };
+
+            // Resolve creator email robustly (try joined user, then raw CreatedBy if it contains an email, else try lookup by uid/email/name)
+            let resolvedCreatorEmail = info.creatorEmail || null;
+            let resolvedCreatorName = info.creatorName || null;
+            try {
+                if (!resolvedCreatorEmail && info.createdByRaw) {
+                    if (typeof info.createdByRaw === 'string' && info.createdByRaw.includes('@')) {
+                        resolvedCreatorEmail = info.createdByRaw;
+                        resolvedCreatorName = info.fullName || resolvedCreatorName || 'Creator';
+                    } else {
+                        // Try to find the user by uid or email or name
+                        const [found] = await pool.query(`SELECT email, name FROM user WHERE (uid = ? OR email = ? OR name = ?) AND IsActive = 1 LIMIT 1`, [info.createdByRaw, info.createdByRaw, info.createdByRaw]);
+                        if (found && found.length > 0 && found[0].email) {
+                            resolvedCreatorEmail = found[0].email;
+                            resolvedCreatorName = found[0].name || resolvedCreatorName;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error('Error resolving creator email for rejection notifications', e.message);
+            }
+
+            // Collect recipients (deduplicated)
+            // Notify assignee, category team members, IT Head(s), and the ticket creator (resolvedCreatorEmail)
+            const recipientsMap = new Map();
+            if (resolvedCreatorEmail) recipientsMap.set((resolvedCreatorEmail || '').toLowerCase(), { email: resolvedCreatorEmail, name: resolvedCreatorName || info.fullName || 'Creator' });
+            if (info.assignerEmail) recipientsMap.set((info.assignerEmail || '').toLowerCase(), { email: info.assignerEmail, name: info.assignerName || 'Assignee' });
+
+            // Category team members
+            if (info.CategoryId) {
+                try {
+                    const [team] = await pool.query(`SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.categoryId = ?`, [info.CategoryId]);
+                    for (const m of team) {
+                        if (m && m.email) recipientsMap.set(m.email.toLowerCase(), { email: m.email, name: m.name });
+                    }
+                } catch (e) {
+                    console.error('Error fetching category team members for rejection notifications', e.message);
+                }
+            }
+
+            // IT Head(s)
+            try {
+                const [heads] = await pool.query(`SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3`);
+                for (const h of heads) {
+                    if (h && h.email) recipientsMap.set(h.email.toLowerCase(), { email: h.email, name: h.name || 'IT Head' });
+                }
+            } catch (e) {
+                console.error('Error fetching IT Head recipients for rejection notifications', e.message);
+            }
+
+            // Send rejection email to each recipient (avoid duplicates)
+            for (const [, r] of recipientsMap) {
+                try {
+                    await emailServiceApp.sendTicketRejectionEmail(ticketData, r.email, r.name || r.email, finalRejectorName, reason || '');
+                    console.log(`📧 Rejection notification sent to ${r.email}`);
+                } catch (e) {
+                    console.error(`Error sending rejection notification to ${r.email}:`, e.message);
+                }
+            }
+
+        } catch (emailError) {
+            console.error('Error sending rejection notifications:', emailError.message);
+        }
+
+        if (wantsHtml) {
+            const ticketNumber = `TK-${new Date().getFullYear()}-${String(id).padStart(3, '0')}`;
+            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket Rejected</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;background:#fff5f5;"><div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #f5e6e6;"><h2 style="color:#b91c1c;">This ticket has been rejected</h2><p>Ticket <strong>${ticketNumber}</strong> was rejected by <strong>${finalRejectorName}</strong>.</p>${reason ? `<p><strong>Reason:</strong> ${reason}</p>` : ''}<p style="color:#64748b;margin-top:12px;">You can close this window.</p></div></body></html>`;
+            return res.status(200).send(html);
+        }
+
+        res.status(200).json({
+            message: 'Ticket rejected successfully',
+            data: {
+                ticketId: id,
+                status: 'REJECTED',
+                rejectedBy: finalRejectorName,
+                rejectionDate: new Date().toISOString(),
+                reason: reason
+            }
+        });
+
+    } catch (error) {
+        console.error('Error rejecting ticket:', error);
+        res.status(500).json({ message: 'Error rejecting ticket', error: error.message });
     }
 };

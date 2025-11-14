@@ -1,98 +1,175 @@
 const express = require('express');
 const multer = require('multer');
 const authMiddleware = require('../middlewares/authMiddleware');
-const { createTicket, getTicket, getAllTickets, getMyTickets, updateTicketStatus, updateTicketAssignment, addComment, getComments, bulkUpdateTicketsWithCommentsToProcessing } = require('../controllers/ticketController');
+const {
+    createTicket,
+    getTicket,
+    getAllTickets,
+    getMyTickets,
+    updateTicketStatus,
+    updateTicketAssignment,
+    addComment,
+    getComments,
+    bulkUpdateTicketsWithCommentsToProcessing,
+    approveTicket,
+    rejectTicket
+} = require('../controllers/ticketController');
 
 const router = express.Router();
 
 // Configure multer for file uploads
-// Store files in memory for processing, then save to disk in controller
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 10 * 1024 * 1024, // 10MB limit per file
-        files: 10 // Maximum 10 files per request
-    },
-    fileFilter: (req, file, cb) => {
-        // Allow common file types
-        const allowedMimes = [
-            'image/jpeg',
-            'image/png', 
-            'image/gif',
-            'application/pdf',
-            'application/msword',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.ms-excel',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'text/plain',
-            'text/csv'
-        ];
-        
-        if (allowedMimes.includes(file.mimetype)) {
-            cb(null, true);
-        } else {
-            cb(new Error(`File type ${file.mimetype} not allowed`), false);
-        }
+        fileSize: 10 * 1024 * 1024,
+        files: 10
     }
 });
 
-// Get all tickets with filtering, pagination, and sorting - Protected route
+// Routes
 router.get('/', authMiddleware, getAllTickets);
-
-// Get tickets related to the logged-in user - Protected route
 router.get('/my-tickets', authMiddleware, getMyTickets);
-
-// Bulk update tickets with comments from NEW to PROCESSING - Protected route
 router.put('/bulk-update-status', authMiddleware, bulkUpdateTicketsWithCommentsToProcessing);
 
-// Create new ticket with optional file attachments - Protected route
-router.post('/', 
-    authMiddleware, 
-    upload.array('attachments', 10), // 'attachments' matches frontend FormData key
-    createTicket
-);
-
-// Get ticket by ID - Protected route
+router.post('/', authMiddleware, upload.array('attachments', 10), createTicket);
 router.get('/:ticketId', authMiddleware, getTicket);
-
-// Update ticket status - Protected route
 router.put('/:ticketId/status', authMiddleware, updateTicketStatus);
-
-// Update ticket assignment - Protected route
 router.put('/:ticketId/assign', authMiddleware, updateTicketAssignment);
-
-// Add comment to ticket - Protected route
 router.post('/:ticketId/comments', authMiddleware, addComment);
-
-// Get comments for ticket - Protected route
 router.get('/:ticketId/comments', authMiddleware, getComments);
 
-// Error handling middleware for multer
+// Protected API endpoints for approve/reject (for authenticated IT Head)
+router.put('/:id/approve', authMiddleware, approveTicket);
+router.put('/:id/reject', authMiddleware, rejectTicket);
+
+// GET approval page (confirmation UI) - optional public page used by email link
+const { getPool } = require('../config/db');
+router.get('/:id/approve', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const token = req.query && req.query.token ? String(req.query.token) : null;
+
+        const pool = getPool();
+        const [rows] = await pool.query('SELECT ApprovalStatus, ApprovalToken, TokenExpiry, ActionedBy FROM ticket WHERE Id = ? AND IsActive = 1', [id]);
+        if (rows.length === 0) return res.status(404).send(`<html><body><h3>Ticket not found</h3></body></html>`);
+        const ticket = rows[0];
+
+        // If ticket already actioned, show friendly message
+        if (ticket.ApprovalStatus && ticket.ApprovalStatus.toLowerCase() !== 'pending') {
+            // Try to lookup actionedBy name
+            let actionerName = null;
+            if (ticket.ActionedBy) {
+                const [u] = await pool.query('SELECT Name FROM user WHERE Id = ? LIMIT 1', [ticket.ActionedBy]);
+                if (u && u.length > 0) actionerName = u[0].Name;
+            }
+            const statusLabel = ticket.ApprovalStatus || 'Processed';
+            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket ${statusLabel}</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;"><div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;"><h2>Ticket ${statusLabel}</h2><p>This ticket has been <strong>${statusLabel}</strong>${actionerName ? ` by <strong>${actionerName}</strong>` : ''}.</p></div></body></html>`;
+            return res.send(html);
+        }
+
+        // Validate token
+        if (!token) return res.status(400).send(`<html><body><h3>Approval token missing</h3></body></html>`);
+        if (!ticket.ApprovalToken || ticket.ApprovalToken !== token) return res.status(403).send(`<html><body><h3>Invalid or expired approval token</h3></body></html>`);
+        const expiry = ticket.TokenExpiry ? new Date(ticket.TokenExpiry) : null;
+        if (!expiry || expiry < new Date()) return res.status(403).send(`<html><body><h3>Approval token expired</h3></body></html>`);
+
+        const actionUrl = `/api/tickets/${id}/approve?token=${encodeURIComponent(token)}`;
+        const page = `<!doctype html><html><head><meta charset="utf-8"><title>Approve Ticket</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;background:#f8fafc;">
+            <div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;">
+                <h2>Approve Ticket</h2>
+                <p>You're about to approve <strong>TK-${new Date().getFullYear()}-${String(id).padStart(3,'0')}</strong>.</p>
+                <form method="POST" action="${actionUrl}">
+                    <label>Comments (optional)</label><br/>
+                    <textarea name="comments" rows="4" style="width:100%;"></textarea>
+                    <div style="margin-top:12px;"><button type="submit" style="background:#059669;color:#fff;padding:10px 16px;border:none;border-radius:6px;">Confirm Approval</button></div>
+                </form>
+            </div></body></html>`;
+        res.send(page);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Error loading approval page');
+    }
+});
+
+// GET rejection page (confirmation UI)
+router.get('/:id/reject', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const token = req.query && req.query.token ? String(req.query.token) : null;
+        const pool = getPool();
+        const [rows] = await pool.query('SELECT ApprovalStatus, ApprovalToken, TokenExpiry, ActionedBy FROM ticket WHERE Id = ? AND IsActive = 1', [id]);
+        if (rows.length === 0) return res.status(404).send(`<html><body><h3>Ticket not found</h3></body></html>`);
+        const ticket = rows[0];
+
+        // If ticket already actioned, show friendly message
+        if (ticket.ApprovalStatus && ticket.ApprovalStatus.toLowerCase() !== 'pending') {
+            let actionerName = null;
+            if (ticket.ActionedBy) {
+                const [u] = await pool.query('SELECT Name FROM user WHERE Id = ? LIMIT 1', [ticket.ActionedBy]);
+                if (u && u.length > 0) actionerName = u[0].Name;
+            }
+            const statusLabel = ticket.ApprovalStatus || 'Processed';
+            const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket ${statusLabel}</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;"><div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;"><h2>Ticket ${statusLabel}</h2><p>This ticket has been <strong>${statusLabel}</strong>${actionerName ? ` by <strong>${actionerName}</strong>` : ''}.</p></div></body></html>`;
+            return res.send(html);
+        }
+
+        // Validate token
+        if (!token) return res.status(400).send(`<html><body><h3>Rejection token missing</h3></body></html>`);
+        if (!ticket.ApprovalToken || ticket.ApprovalToken !== token) return res.status(403).send(`<html><body><h3>Invalid or expired rejection token</h3></body></html>`);
+        const expiry = ticket.TokenExpiry ? new Date(ticket.TokenExpiry) : null;
+        if (!expiry || expiry < new Date()) return res.status(403).send(`<html><body><h3>Rejection token expired</h3></body></html>`);
+
+        const actionUrl = `/api/tickets/${id}/reject?token=${encodeURIComponent(token)}`;
+        const page = `<!doctype html><html><head><meta charset="utf-8"><title>Reject Ticket</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;background:#fff5f5;">
+            <div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;">
+                <h2>Reject Ticket</h2>
+                <p>You're about to reject <strong>TK-${new Date().getFullYear()}-${String(id).padStart(3,'0')}</strong>.</p>
+                <form method="POST" action="${actionUrl}">
+                    <label>Reason (required)</label><br/>
+                    <textarea name="reason" rows="4" required style="width:100%;"></textarea>
+                    <div style="margin-top:12px;"><button type="submit" style="background:#dc2626;color:#fff;padding:10px 16px;border:none;border-radius:6px;">Confirm Rejection</button></div>
+                </form>
+            </div></body></html>`;
+        res.send(page);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Error loading rejection page');
+    }
+});
+
+// POST handlers — forward to controller (controller handles token-based approvals too)
+router.post('/:id/approve', async (req, res, next) => {
+    try {
+        await approveTicket(req, res);
+    } catch (err) {
+        next(err);
+    }
+});
+
+router.post('/:id/reject', async (req, res, next) => {
+    try {
+        await rejectTicket(req, res);
+    } catch (err) {
+        next(err);
+    }
+});
+
+// Multer/file upload error handler
 router.use((error, req, res, next) => {
-    if (error instanceof multer.MulterError) {
-        if (error.code === 'LIMIT_FILE_SIZE') {
-            return res.status(400).json({
-                message: 'File too large. Maximum size is 10MB per file.'
-            });
-        }
-        if (error.code === 'LIMIT_FILE_COUNT') {
-            return res.status(400).json({
-                message: 'Too many files. Maximum is 10 files per request.'
-            });
-        }
-        return res.status(400).json({
-            message: 'File upload error',
-            error: error.message
-        });
+    if (error && error.code && error.code.startsWith('LIMIT_')) {
+        return res.status(400).json({ message: error.message });
     }
-    
-    if (error.message && error.message.includes('File type')) {
-        return res.status(400).json({
-            message: error.message
-        });
-    }
-    
     next(error);
 });
 
 module.exports = router;
+
+            // Multer/file upload error handler
+            router.use((error, req, res, next) => {
+                if (error && error.code && error.code.startsWith('LIMIT_')) {
+                    return res.status(400).json({ message: error.message });
+                }
+                next(error);
+            });
+
+            module.exports = router;

@@ -10,6 +10,22 @@ exports.register = async (req, res) => {
     const { email: rawEmail, password, name, role, category } = req.body;
     const email = rawEmail && typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : rawEmail;
 
+    // If no password provided, derive a temporary password from the user's first name.
+    // Example: name = 'Tashini Perera' -> temp password 'Tashini@123'
+    const deriveFromName = (n) => {
+        if (!n || typeof n !== 'string') return 'User';
+        const first = n.trim().split(/\s+/)[0] || 'User';
+        // keep only alphanumeric characters for safety
+        const safe = first.replace(/[^A-Za-z0-9]/g, '') || 'User';
+        // Capitalize first letter
+        const capitalized = safe.charAt(0).toUpperCase() + safe.slice(1);
+        return capitalized;
+    };
+
+    const plainPassword = password && typeof password === 'string' && password.trim().length > 0
+        ? password
+        : `${deriveFromName(name)}@123`;
+
     try {
         // Check if user exists
     const pool = getPool();
@@ -18,7 +34,7 @@ exports.register = async (req, res) => {
             return res.status(400).json({ message: 'Email already registered' });
         }
 
-        const hashed = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(plainPassword, 10);
         const uid = randomUUID();
 
         // Accept role and category IDs directly from frontend (coerce to Number or null)
@@ -69,7 +85,9 @@ exports.register = async (req, res) => {
             // Send welcome email using application permissions (no interactive auth required)
             // Ensure fallback uses the requested IP:port 10.1.1.57:3001
             const loginUrl = `${process.env.APP_URL || 'http://10.1.1.57:3001'}/login`;
-            await emailServiceApp.sendWelcomeEmail(email, name || 'User', { role: roleName, categories: categoryNames, loginUrl });
+            // Include the plaintext password in the welcome email so the user can sign in (and change it via Forgot Password)
+            // Pass the actual plaintext used for the account (plainPassword) so the user receives it in the welcome email
+            await emailServiceApp.sendWelcomeEmail(email, name || 'User', { role: roleName, categories: categoryNames, loginUrl, tempPassword: plainPassword });
             console.log(`📧 Welcome email sent successfully to ${email} from tashini.m@printcare.lk`);
 
         } catch (emailError) {
