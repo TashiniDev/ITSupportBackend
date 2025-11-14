@@ -1,7 +1,7 @@
 const { getPool } = require('../config/db');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const { randomUUID } = require('crypto');
+const { randomUUID, randomBytes } = require('crypto');
 const emailServiceApp = require('../services/emailServiceApp');
 
 // Note: Microsoft Graph API email service using Application Permissions
@@ -10,21 +10,23 @@ exports.register = async (req, res) => {
     const { email: rawEmail, password, name, role, category } = req.body;
     const email = rawEmail && typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : rawEmail;
 
-    // If no password provided, derive a temporary password from the user's first name.
-    // Example: name = 'Tashini Perera' -> temp password 'Tashini@123'
-    const deriveFromName = (n) => {
-        if (!n || typeof n !== 'string') return 'User';
-        const first = n.trim().split(/\s+/)[0] || 'User';
-        // keep only alphanumeric characters for safety
-        const safe = first.replace(/[^A-Za-z0-9]/g, '') || 'User';
-        // Capitalize first letter
-        const capitalized = safe.charAt(0).toUpperCase() + safe.slice(1);
-        return capitalized;
+    // If no password provided, generate a secure random temporary password and email it to the user.
+    // The generated password is returned to the welcome email so the user can sign in and then change it.
+    const generateTempPassword = (length = 12) => {
+        const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+';
+        // Use crypto.randomBytes for secure randomness
+        const bytes = randomBytes(length);
+        let result = '';
+        for (let i = 0; i < length; i++) {
+            const idx = bytes[i] % charset.length;
+            result += charset[idx];
+        }
+        return result;
     };
 
     const plainPassword = password && typeof password === 'string' && password.trim().length > 0
         ? password
-        : `${deriveFromName(name)}@123`;
+        : generateTempPassword(12);
 
     try {
         // Check if user exists
