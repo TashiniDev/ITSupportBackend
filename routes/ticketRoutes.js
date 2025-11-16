@@ -12,7 +12,9 @@ const {
     getComments,
     bulkUpdateTicketsWithCommentsToProcessing,
     approveTicket,
-    rejectTicket
+    rejectTicket,
+    updateTicketToProcessing,
+    updateTicketToCompleted
 } = require('../controllers/ticketController');
 
 const router = express.Router();
@@ -35,6 +37,8 @@ router.post('/', authMiddleware, upload.array('attachments', 10), createTicket);
 router.get('/:ticketId', authMiddleware, getTicket);
 router.put('/:ticketId/status', authMiddleware, updateTicketStatus);
 router.put('/:ticketId/assign', authMiddleware, updateTicketAssignment);
+router.put('/:id/processing', authMiddleware, updateTicketToProcessing);
+router.put('/:id/complete', authMiddleware, updateTicketToCompleted);
 router.post('/:ticketId/comments', authMiddleware, addComment);
 router.get('/:ticketId/comments', authMiddleware, getComments);
 

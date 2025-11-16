@@ -2018,3 +2018,243 @@ exports.rejectTicket = async (req, res) => {
         res.status(500).json({ message: 'Error rejecting ticket', error: error.message });
     }
 };
+
+/**
+ * Update ticket status to PROCESSING
+ * PUT /api/tickets/:id/processing
+ */
+exports.updateTicketToProcessing = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Validate ticket ID
+        if (!id || isNaN(id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid ticket ID is required'
+            });
+        }
+        
+        const pool = getPool();
+        
+        // First, verify that the ticket exists and is active
+        const [ticketRows] = await pool.query(
+            'SELECT Id, Status, ApprovalStatus FROM ticket WHERE Id = ? AND IsActive = 1',
+            [parseInt(id)]
+        );
+        
+        if (ticketRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Ticket not found'
+            });
+        }
+        
+        const currentStatus = ticketRows[0].Status;
+        const approvalStatus = ticketRows[0].ApprovalStatus;
+        
+        // // Check if ticket is approved (if approval workflow is enabled)
+        // if (approvalStatus && approvalStatus.toLowerCase() === 'pending') {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: 'Cannot change status to PROCESSING. Ticket is pending approval.'
+        //     });
+        // }
+        
+        // if (approvalStatus && approvalStatus.toLowerCase() === 'rejected') {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: 'Cannot change status to PROCESSING. Ticket has been rejected.'
+        //     });
+        // }
+        
+        // Check if status is already PROCESSING
+        if (currentStatus === 'PROCESSING') {
+            return res.status(200).json({
+                success: true,
+                message: 'Ticket status is already set to PROCESSING',
+                data: {
+                    ticketId: parseInt(id),
+                    status: 'PROCESSING',
+                    previousStatus: currentStatus
+                }
+            });
+        }
+        
+        // Get user info from auth middleware
+        const updatedBy = req.user?.name || req.user?.email || 'System';
+        
+        // Update the ticket status to PROCESSING
+        const [updateResult] = await pool.query(
+            `UPDATE ticket 
+             SET Status = 'PROCESSING', UpdatedBy = ?, UpdatedDate = NOW() 
+             WHERE Id = ? AND IsActive = 1`,
+            [updatedBy, parseInt(id)]
+        );
+        
+        if (updateResult.affectedRows === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Failed to update ticket status'
+            });
+        }
+        
+        // Get the updated ticket information
+        const [updatedTicketRows] = await pool.query(
+            `SELECT 
+                Id,
+                CONCAT('TK-', YEAR(CreatedDate), '-', LPAD(Id, 3, '0')) as ticketNumber,
+                Status,
+                UpdatedBy,
+                UpdatedDate
+             FROM ticket 
+             WHERE Id = ?`,
+            [parseInt(id)]
+        );
+        
+        const updatedTicket = updatedTicketRows[0];
+        
+        console.log(`✅ Ticket ${updatedTicket.ticketNumber} status changed from ${currentStatus} to PROCESSING by ${updatedBy}`);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Ticket status updated to PROCESSING successfully',
+            data: {
+                ticketId: updatedTicket.Id,
+                ticketNumber: updatedTicket.ticketNumber,
+                status: updatedTicket.Status,
+                previousStatus: currentStatus,
+                updatedBy: updatedTicket.UpdatedBy,
+                updatedDate: updatedTicket.UpdatedDate
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error updating ticket to PROCESSING:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating ticket status',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Update ticket status to COMPLETED
+ * PUT /api/tickets/:id/complete
+ */
+exports.updateTicketToCompleted = async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // Validate ticket ID
+        if (!id || isNaN(id)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid ticket ID is required'
+            });
+        }
+        
+        const pool = getPool();
+        
+        // First, verify that the ticket exists and is active
+        const [ticketRows] = await pool.query(
+            'SELECT Id, Status, ApprovalStatus FROM ticket WHERE Id = ? AND IsActive = 1',
+            [parseInt(id)]
+        );
+        
+        if (ticketRows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Ticket not found'
+            });
+        }
+        
+        const currentStatus = ticketRows[0].Status;
+        const approvalStatus = ticketRows[0].ApprovalStatus;
+        
+        // // Check if ticket is approved (if approval workflow is enabled)
+        // if (approvalStatus && approvalStatus.toLowerCase() === 'pending') {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: 'Cannot change status to COMPLETED. Ticket is pending approval.'
+        //     });
+        // }
+        
+        // if (approvalStatus && approvalStatus.toLowerCase() === 'rejected') {
+        //     return res.status(400).json({
+        //         success: false,
+        //         message: 'Cannot change status to COMPLETED. Ticket has been rejected.'
+        //     });
+        // }
+        
+        // Check if status is already COMPLETED
+        if (currentStatus === 'COMPLETED') {
+            return res.status(200).json({
+                success: true,
+                message: 'Ticket status is already set to COMPLETED',
+                data: {
+                    ticketId: parseInt(id),
+                    status: 'COMPLETED',
+                    previousStatus: currentStatus
+                }
+            });
+        }
+        
+        // Get user info from auth middleware
+        const updatedBy = req.user?.name || req.user?.email || 'System';
+        
+        // Update the ticket status to COMPLETED
+        const [updateResult] = await pool.query(
+            `UPDATE ticket 
+             SET Status = 'COMPLETED', UpdatedBy = ?, UpdatedDate = NOW() 
+             WHERE Id = ? AND IsActive = 1`,
+            [updatedBy, parseInt(id)]
+        );
+        
+        if (updateResult.affectedRows === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Failed to update ticket status'
+            });
+        }
+        
+        // Get the updated ticket information
+        const [updatedTicketRows] = await pool.query(
+            `SELECT 
+                Id,
+                CONCAT('TK-', YEAR(CreatedDate), '-', LPAD(Id, 3, '0')) as ticketNumber,
+                Status,
+                UpdatedBy,
+                UpdatedDate
+             FROM ticket 
+             WHERE Id = ?`,
+            [parseInt(id)]
+        );
+        
+        const updatedTicket = updatedTicketRows[0];
+        
+        console.log(`✅ Ticket ${updatedTicket.ticketNumber} status changed from ${currentStatus} to COMPLETED by ${updatedBy}`);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Ticket status updated to COMPLETED successfully',
+            data: {
+                ticketId: updatedTicket.Id,
+                ticketNumber: updatedTicket.ticketNumber,
+                status: updatedTicket.Status,
+                previousStatus: currentStatus,
+                updatedBy: updatedTicket.UpdatedBy,
+                updatedDate: updatedTicket.UpdatedDate
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error updating ticket to COMPLETED:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error updating ticket status',
+            error: error.message
+        });
+    }
+};
