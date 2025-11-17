@@ -15,7 +15,8 @@ const {
     rejectTicket,
     updateTicketToProcessing,
     updateTicketToCompleted,
-   
+    downloadAttachment,
+    viewAttachmentPage
 } = require('../controllers/ticketController');
 
 
@@ -43,7 +44,11 @@ router.put('/:id/processing', authMiddleware, updateTicketToProcessing);
 router.put('/:id/complete', authMiddleware, updateTicketToCompleted);
 router.post('/:ticketId/comments', authMiddleware, addComment);
 router.get('/:ticketId/comments', authMiddleware, getComments);
- 
+
+// Download attachment route
+router.get('/attachments/:attachmentId/download', authMiddleware, downloadAttachment);
+// View attachment in a simple HTML wrapper (preserves favicon)
+router.get('/attachments/:attachmentId/view', authMiddleware, viewAttachmentPage);
 
 // Protected API endpoints for approve/reject (for authenticated IT Head)
 router.put('/:id/approve', authMiddleware, approveTicket);
