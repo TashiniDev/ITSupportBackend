@@ -15,6 +15,7 @@ const {
     rejectTicket,
     updateTicketToProcessing,
     updateTicketToCompleted,
+    downloadAttachment,
    
 } = require('../controllers/ticketController');
 
@@ -36,6 +37,10 @@ router.get('/my-tickets', authMiddleware, getMyTickets);
 router.put('/bulk-update-status', authMiddleware, bulkUpdateTicketsWithCommentsToProcessing);
 
 router.post('/', authMiddleware, upload.array('attachments', 10), createTicket);
+
+// Download an attachment by id (must come before the '/:ticketId' route to avoid param shadowing)
+router.get('/attachments/:attachmentId/download', authMiddleware, downloadAttachment);
+
 router.get('/:ticketId', authMiddleware, getTicket);
 router.put('/:ticketId/status', authMiddleware, updateTicketStatus);
 router.put('/:ticketId/assign', authMiddleware, updateTicketAssignment);

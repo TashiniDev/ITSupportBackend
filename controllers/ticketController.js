@@ -2319,3 +2319,85 @@ exports.downloadAttachment = async (req, res) => {
         });
     }
 };
+
+/**
+ * View an attachment inline when possible (images, PDFs).
+ * For other types, returns a small HTML page with a download link.
+ */
+exports.viewAttachmentPage = async (req, res) => {
+    try {
+        const { attachmentId } = req.params;
+        const pool = getPool();
+
+        // Get attachment info from database
+        const [attachments] = await pool.query(
+            `SELECT Id, Path, TicketId FROM attachments WHERE Id = ? AND IsActive = 1`,
+            [parseInt(attachmentId)]
+        );
+
+        if (attachments.length === 0) {
+            return res.status(404).send('<html><body><h3>Attachment not found</h3></body></html>');
+        }
+
+        const attachment = attachments[0];
+        const filePath = path.join(__dirname, '..', attachment.Path);
+
+        // Check file exists
+        try {
+            await fs.access(filePath);
+        } catch (err) {
+            console.error('File not found for view:', filePath);
+            return res.status(404).send('<html><body><h3>File not found on server</h3></body></html>');
+        }
+
+        const filename = path.basename(attachment.Path);
+        const ext = path.extname(filename).toLowerCase();
+
+        // Minimal mime mapping for common types
+        const mimeMap = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+            '.bmp': 'image/bmp',
+            '.pdf': 'application/pdf',
+            '.txt': 'text/plain'
+        };
+
+        const viewableTypes = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.pdf']);
+
+        if (viewableTypes.has(ext)) {
+            const contentType = mimeMap[ext] || 'application/octet-stream';
+            res.setHeader('Content-Type', contentType);
+            // Inline so browser will render instead of download
+            res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+
+            const fileBuffer = await fs.readFile(filePath);
+            return res.send(fileBuffer);
+        }
+
+        // For non-viewable types, show a tiny HTML page with a download link
+        const downloadUrl = `/api/tickets/attachments/${attachmentId}/download`;
+        const html = `<!doctype html>
+            <html>
+              <head>
+                <meta charset="utf-8">
+                <title>View Attachment - ${filename}</title>
+                <style>body{font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:40px auto;color:#111}a.button{display:inline-block;padding:10px 14px;background:#0369a1;color:#fff;border-radius:6px;text-decoration:none}</style>
+              </head>
+              <body>
+                <h2>Attachment: ${filename}</h2>
+                <p>This file type cannot be previewed inline. Use the button below to download the file.</p>
+                <p><a class="button" href="${downloadUrl}">Download</a></p>
+              </body>
+            </html>`;
+
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+
+    } catch (error) {
+        console.error('Error viewing attachment:', error);
+        res.status(500).send('<html><body><h3>Error loading attachment</h3></body></html>');
+    }
+};
