@@ -2,6 +2,7 @@ const { getPool } = require('../config/db');
 const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 
 const { normalizeSeverityInput, formatSeverityForFrontend } = require('../lib/severity');
 
@@ -2317,5 +2318,101 @@ exports.downloadAttachment = async (req, res) => {
             message: 'Error downloading file',
             error: error.message
         });
+    }
+};
+
+/**
+ * View an attachment inside a minimal HTML wrapper that includes the app favicon.
+ * This ensures browsers show the correct favicon when attachments are opened from the UI.
+ * GET /api/tickets/attachments/:attachmentId/view
+ */
+exports.viewAttachmentPage = async (req, res) => {
+        try {
+                const { attachmentId } = req.params;
+                const pool = getPool();
+
+                // Authorization: allow if user is authenticated OR a valid token is provided
+                let authorized = false;
+                if (req.user && (req.user.uid || req.user.id || req.user.email)) {
+                    authorized = true;
+                } else if (req.query && req.query.token) {
+                    try {
+                        const decoded = jwt.verify(String(req.query.token), process.env.JWT_SECRET);
+                        if (decoded && decoded.attachmentId && Number(decoded.attachmentId) === Number(attachmentId)) {
+                            authorized = true;
+                        }
+                    } catch (e) {
+                        console.warn('Invalid or expired attachment token', e.message);
+                    }
+                }
+
+                if (!authorized) {
+                    return res.status(403).send('<html><body><h3>Unauthorized to view attachment</h3></body></html>');
+                }
+
+                // Get attachment info from database
+                const [attachments] = await pool.query(
+                        `SELECT Id, Path, TicketId, OriginalName FROM attachments WHERE Id = ? AND IsActive = 1`,
+                        [parseInt(attachmentId)]
+                );
+
+                if (attachments.length === 0) {
+                        return res.status(404).send('<html><body><h3>Attachment not found</h3></body></html>');
+                }
+
+                const attachment = attachments[0];
+
+                // Build public URL to the file (attachment.Path is expected to be like 'uploads/filename')
+                const fileUrl = attachment.Path.startsWith('/') ? attachment.Path : '/' + attachment.Path;
+
+                // Minimal HTML wrapper including favicon link
+                const html = `<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>${attachment.OriginalName || 'Attachment'}</title>
+        <link rel="icon" href="/help-desk-icon-8.ico" type="image/x-icon" />
+        <style>body{margin:0;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh}img{max-width:100%;max-height:100%;object-fit:contain}</style>
+    </head>
+    <body>
+        <img src="${fileUrl}" alt="Attachment" />
+    </body>
+</html>`;
+
+                res.status(200).send(html);
+        } catch (error) {
+                console.error('Error rendering attachment view page:', error);
+                res.status(500).send('<html><body><h3>Error loading attachment</h3></body></html>');
+        }
+};
+
+/**
+ * Generate a short-lived token that allows a new-tab view of an attachment.
+ * POST /api/tickets/attachments/:attachmentId/token
+ * Requires authentication (authMiddleware). Returns { token, url }.
+ */
+exports.generateAttachmentToken = async (req, res) => {
+    try {
+        const { attachmentId } = req.params;
+        const pool = getPool();
+
+        // Verify attachment exists
+        const [attachments] = await pool.query(
+            `SELECT Id FROM attachments WHERE Id = ? AND IsActive = 1`,
+            [parseInt(attachmentId)]
+        );
+        if (attachments.length === 0) {
+            return res.status(404).json({ success: false, message: 'Attachment not found' });
+        }
+
+        // Create short-lived JWT (10 minutes)
+        const token = jwt.sign({ attachmentId: Number(attachmentId) }, process.env.JWT_SECRET, { expiresIn: '10m' });
+
+        const url = `/api/tickets/attachments/${attachmentId}/view?token=${encodeURIComponent(token)}`;
+        res.status(200).json({ success: true, token, url });
+    } catch (error) {
+        console.error('Error generating attachment token:', error);
+        res.status(500).json({ success: false, message: 'Error generating token' });
     }
 };
