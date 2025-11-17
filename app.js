@@ -71,6 +71,8 @@ app.get('/api/debug/env', (req, res) => {
     });
 });
 
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); 
+
 // --- Static Files and Frontend (React App) Serving ---
 
 // Serve static files from the React app's 'build' directory

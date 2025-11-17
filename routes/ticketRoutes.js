@@ -14,7 +14,8 @@ const {
     approveTicket,
     rejectTicket,
     updateTicketToProcessing,
-    updateTicketToCompleted
+    updateTicketToCompleted,
+    downloadAttachment
 } = require('../controllers/ticketController');
 
 const router = express.Router();
@@ -41,6 +42,9 @@ router.put('/:id/processing', authMiddleware, updateTicketToProcessing);
 router.put('/:id/complete', authMiddleware, updateTicketToCompleted);
 router.post('/:ticketId/comments', authMiddleware, addComment);
 router.get('/:ticketId/comments', authMiddleware, getComments);
+
+// Download attachment route
+router.get('/attachments/:attachmentId/download', authMiddleware, downloadAttachment);
 
 // Protected API endpoints for approve/reject (for authenticated IT Head)
 router.put('/:id/approve', authMiddleware, approveTicket);

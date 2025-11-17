@@ -2258,3 +2258,64 @@ exports.updateTicketToCompleted = async (req, res) => {
         });
     }
 };
+
+/**
+ * Download an attachment file
+ * Allows authenticated users to download files attached to tickets
+ */
+exports.downloadAttachment = async (req, res) => {
+    try {
+        const { attachmentId } = req.params;
+        const pool = getPool();
+        
+        // Get attachment info from database
+        const [attachments] = await pool.query(
+            `SELECT Id, Path, TicketId FROM attachments WHERE Id = ? AND IsActive = 1`,
+            [parseInt(attachmentId)]
+        );
+        
+        if (attachments.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Attachment not found'
+            });
+        }
+        
+        const attachment = attachments[0];
+        
+        // Construct full file path
+        const filePath = path.join(__dirname, '..', attachment.Path);
+        
+        // Check if file exists
+        try {
+            await fs.access(filePath);
+        } catch (error) {
+            console.error('File not found:', filePath);
+            return res.status(404).json({
+                success: false,
+                message: 'File not found on server'
+            });
+        }
+        
+        // Extract original filename from path
+        const filename = path.basename(attachment.Path);
+        
+        // Set appropriate headers for file download
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        
+        // Read and send the file
+        const fileBuffer = await fs.readFile(filePath);
+        res.send(fileBuffer);
+        
+        console.log(`✅ File downloaded: ${filename} (Attachment ID: ${attachmentId})`);
+        
+    } catch (error) {
+        console.error('Error downloading attachment:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error downloading file',
+            error: error.message
+        });
+    }
+};
