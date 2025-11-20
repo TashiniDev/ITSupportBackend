@@ -88,6 +88,17 @@ class EmailServiceApp {
                 }
             };
 
+            // Add attachments if provided
+            if (emailData.attachments && emailData.attachments.length > 0) {
+                message.attachments = emailData.attachments.map(attachment => ({
+                    '@odata.type': '#microsoft.graph.fileAttachment',
+                    name: attachment.name,
+                    contentType: attachment.contentType,
+                    contentBytes: attachment.contentBytes
+                }));
+                console.log(`📎 Adding ${emailData.attachments.length} attachment(s) to email`);
+            }
+
             const sendMailData = {
                 message: message,
                 saveToSentItems: emailData.saveToSentItems !== false
@@ -325,8 +336,9 @@ class EmailServiceApp {
      * @param {Array} categoryTeamMembers - Array of team member objects who work on this specific category
      * @param {string} itHeadEmail - Email of the IT head
      * @param {string} ticketCreatorEmail - Email of the ticket creator
+     * @param {Array} attachments - Array of attachment objects with name, contentType, and contentBytes
      */
-    async sendTicketCreationEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail) {
+    async sendTicketCreationEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, attachments = []) {
         const {
             ticketId,
             category,
@@ -348,6 +360,12 @@ class EmailServiceApp {
     // Normalize presence checks: treat 'N/A' (case-insensitive) as not provided
     const hasRequestType = ticketData.requestType && String(ticketData.requestType).trim().toLowerCase() !== 'n/a';
     const hasIssueType = issueType && String(issueType).trim().toLowerCase() !== 'n/a';
+    
+    // Check if this ticket requires approval (only for Change management requests)
+    const requiresApproval = ticketData.requestType && 
+                           String(ticketData.requestType).trim().toLowerCase() === 'change management requests';
+    
+    console.log(`📋 Ticket Request Type: "${ticketData.requestType}" | Requires Approval: ${requiresApproval}`);
 
         // Email template for assigned team member
         const assigneeTemplate = `
@@ -522,14 +540,14 @@ class EmailServiceApp {
                             </div>
                         </div>
 
-                        <div style="background:#fff3cd; border:1px solid #ffecb5; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                        ${requiresApproval ? `<div style="background:#fff3cd; border:1px solid #ffecb5; padding:20px 25px; border-radius:10px; margin:25px 0;">
                             <h4 style="color:#856404; margin:0 0 15px 0; font-size:16px; display:flex; align-items:center; gap:8px;">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke="#856404" stroke-width="1.5"/>
                                 </svg>
                                 IT Head Action Required
                             </h4>
-                            <p style="color:#856404; margin:0 0 20px 0; font-size:14px;">As the IT Head, you can approve or reject this ticket. Your decision will be communicated to all relevant parties.</p>
+                            <p style="color:#856404; margin:0 0 20px 0; font-size:14px;">This is a <strong>Change Management Request</strong> that requires your approval. Please review the details and approve or reject this ticket.</p>
                             <div style="text-align:center;">
                                           <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/api/tickets/${ticketId.split('-').pop()}/approve${ticketData.approvalToken ? `?token=${ticketData.approvalToken}` : ''}" 
                                    style="background-color:#059669;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;margin:0 10px;font-size:14px;">
@@ -540,7 +558,7 @@ class EmailServiceApp {
                                    ❌ Reject Ticket
                                 </a>
                             </div>
-                        </div>
+                        </div>` : ''}
 
                         <p style="text-align:center; margin:30px 0;">
                             <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/admin/tickets" style="background-color:#1e40af;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View All Tickets</a>
@@ -569,7 +587,8 @@ class EmailServiceApp {
                         toName: teamMember.name,
                         subject: `New Ticket in ${category} - ${ticketId}`,
                         body: assigneeTemplate,
-                        contentType: 'HTML'
+                        contentType: 'HTML',
+                        attachments: attachments
                     };
                     await this.sendEmailAsUser(memberEmailData);
                     console.log(`📧 Ticket notification email sent to ${teamMember.name} (${teamMember.email})`);
@@ -583,7 +602,8 @@ class EmailServiceApp {
                     toName: 'IT Head',
                     subject: `New Ticket Created - ${ticketId} (${category}) - Assigned to ${assignedTo}`,
                     body: itHeadTemplate,
-                    contentType: 'HTML'
+                    contentType: 'HTML',
+                    attachments: attachments
                 };
                 await this.sendEmailAsUser(itHeadEmailData);
                 console.log(`📧 Ticket notification email sent to IT Head at ${itHeadEmail}`);
@@ -596,7 +616,8 @@ class EmailServiceApp {
                     toName: requesterName,
                     subject: `Ticket Created Successfully - ${ticketId} (${category})`,
                     body: assigneeTemplate, // Use the same template as team members for now
-                    contentType: 'HTML'
+                    contentType: 'HTML',
+                    attachments: attachments
                 };
                 await this.sendEmailAsUser(creatorEmailData);
                 console.log(`📧 Ticket confirmation email sent to creator at ${ticketCreatorEmail}`);

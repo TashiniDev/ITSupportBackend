@@ -19,6 +19,7 @@ exports.createTicket = async (req, res) => {
         const {
             fullName,
             contactNumber,
+            email,
             department,
             company,
             category,
@@ -41,13 +42,14 @@ exports.createTicket = async (req, res) => {
 
         const [ticketResult] = await connection.query(
             `INSERT INTO ticket (
-                Name, ContactNumber, AssignerId, IssueId, RequestTypeId, 
+                Name, ContactNumber, Email, AssignerId, IssueId, RequestTypeId, 
                 CompanyId, DepartmentId, Description, CategoryId, Status, ApprovalStatus, ApprovalToken, TokenExpiry,
                     SeverityLevel, CreatedBy, CreatedDate, IsActive
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', 'Pending', ?, ?, ?, ?, NOW(), 1)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', 'Pending', ?, ?, ?, ?, NOW(), 1)`,
             [
                 fullName,
                 contactNumber || null,
+                email || null,
                 assignedTo ? parseInt(assignedTo) : null,
                 issueType ? parseInt(issueType) : null,
                 requestType ? parseInt(requestType) : null,
@@ -68,6 +70,7 @@ exports.createTicket = async (req, res) => {
         
         // Handle file attachments if any
         const attachmentIds = [];
+        const emailAttachments = []; // Store file data for email attachments
         if (req.files && req.files.length > 0) {
             // Ensure uploads directory exists
             const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -98,6 +101,14 @@ exports.createTicket = async (req, res) => {
                 );
                 
                 attachmentIds.push(attachmentResult.insertId);
+                
+                // Prepare attachment data for email (base64 encoded)
+                emailAttachments.push({
+                    name: file.originalname,
+                    contentType: file.mimetype,
+                    contentBytes: file.buffer.toString('base64'),
+                    size: file.size
+                });
             }
         }
         
@@ -204,8 +215,61 @@ exports.createTicket = async (req, res) => {
                 // Send ticket creation email using Microsoft Graph API
                 // Notify category team members, the ticket creator, and the IT Head. The IT Head template contains approve/reject buttons.
                 try {
-                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, creatorEmail);
-                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, creator)`);
+                    // Use email from form if provided, otherwise fall back to creatorEmail
+                    const notificationEmail = email || creatorEmail;
+                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, notificationEmail, emailAttachments);
+                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, creator)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
+                    
+                    // Send additional confirmation email to the email address provided in the form if different from creator email
+                    if (email && email !== creatorEmail) {
+                        try {
+                            const confirmationEmailData = {
+                                to: email,
+                                toName: fullName || 'User',
+                                subject: `Ticket Created Successfully - ${ticketNumber}`,
+                                attachments: emailAttachments,
+                                body: `
+                                    <div style="font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif; background-color:#f0f2f5; padding:30px; line-height:1.6; color:#333;">
+                                        <div style="max-width:640px; margin:0 auto; background:#ffffff; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.08); overflow:hidden; border:1px solid #e2e8f0;">
+                                            <div style="padding:25px 30px; background:linear-gradient(135deg, #059669 0%, #10b981 100%); color:#ffffff;">
+                                                <h2 style="margin:0; font-size:24px;">Ticket Created Successfully</h2>
+                                            </div>
+                                            <div style="padding:30px;">
+                                                <p style="color:#4a5568; margin:0 0 20px 0; font-size:16px;">Thank you for submitting your ticket. Your request has been received and assigned to our support team.</p>
+                                                
+                                                <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                                                    <h3 style="color:#065f46; margin:0 0 15px 0; font-size:18px;">Ticket Information</h3>
+                                                    <div style="color:#065f46;">
+                                                        <div style="margin-bottom:10px;"><strong>Ticket ID:</strong> ${ticketNumber}</div>
+                                                        <div style="margin-bottom:10px;"><strong>Category:</strong> ${ticket.categoryName || 'Uncategorized'}</div>
+                                                        <div style="margin-bottom:10px;"><strong>Assigned To:</strong> ${ticket.assignedToName || 'Unassigned'}</div>
+                                                        <div style="margin-bottom:10px;"><strong>Issue Type:</strong> ${ticket.issueTypeName || 'N/A'}</div>
+                                                        <div style="margin-bottom:10px;"><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${formatSeverityForFrontend(dbSeverity)}</span></div>
+                                                        <div style="margin-bottom:10px;"><strong>Status:</strong> NEW</div>
+                                                        <div style="margin-bottom:10px;"><strong>Created:</strong> ${new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}</div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                                                    <h4 style="color:#2d3748; margin:0 0 10px 0; font-size:16px;">Description:</h4>
+                                                    <p style="color:#4a5568; margin:0; font-size:14px; white-space:pre-wrap;">${ticket.Description || description || 'No description provided'}</p>
+                                                </div>
+                                                
+                                                <p style="color:#64748b; margin-top:25px; font-size:14px;">
+                                                    You will receive updates on this ticket via email. If you have any questions, please contact our support team.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `,
+                                contentType: 'HTML'
+                            };
+                            await emailServiceApp.sendEmailAsUser(confirmationEmailData);
+                            console.log(`📧 Confirmation email sent to form email: ${email}`);
+                        } catch (confirmEmailError) {
+                            console.error(`📧 Failed to send confirmation email to ${email}:`, confirmEmailError.message);
+                        }
+                    }
                 } catch (emailError) {
                     console.error(`📧 Failed to send ticket creation emails:`, emailError.message);
                     // Don't fail the ticket creation if email fails
@@ -418,6 +482,7 @@ exports.getAllTickets = async (req, res) => {
         const {
             category,
             assignedTo,
+            status,
             dateFrom,
             dateTo,
             page = 1,
@@ -425,6 +490,8 @@ exports.getAllTickets = async (req, res) => {
             sort = 'createdAt',
             order = 'desc'
         } = req.query;
+
+        console.log('📋 getAllTickets filters:', { category, assignedTo, status, dateFrom, dateTo });
 
         const pool = getPool();
         
@@ -437,9 +504,18 @@ exports.getAllTickets = async (req, res) => {
             queryParams.push(parseInt(category));
         }
         
-        if (assignedTo) {
-            whereConditions.push('t.AssignerId = ?');
-            queryParams.push(parseInt(assignedTo));
+        if (assignedTo && assignedTo !== 'null' && assignedTo !== 'undefined') {
+            const assignedToId = parseInt(assignedTo);
+            if (!isNaN(assignedToId)) {
+                whereConditions.push('t.AssignerId = ?');
+                queryParams.push(assignedToId);
+                console.log('✅ Applied assignedTo filter:', assignedToId);
+            }
+        }
+        
+        if (status) {
+            whereConditions.push('t.Status = ?');
+            queryParams.push(status.toUpperCase());
         }
         
         if (dateFrom) {
@@ -453,6 +529,9 @@ exports.getAllTickets = async (req, res) => {
         }
         
         const whereClause = whereConditions.join(' AND ');
+        
+        console.log('🔍 WHERE clause:', whereClause);
+        console.log('📊 Query params:', queryParams);
         
         // Validate and sanitize sort field
     const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'severityLevel', 'fullName'];
@@ -596,6 +675,8 @@ exports.getAllTickets = async (req, res) => {
 exports.getMyTickets = async (req, res) => {
     try {
         const {
+            assignedTo,
+            status,
             dateFrom,
             dateTo,
             page = 1,
@@ -603,6 +684,8 @@ exports.getMyTickets = async (req, res) => {
             sort = 'createdAt',
             order = 'desc'
         } = req.query;
+
+        console.log('📋 getMyTickets filters:', { assignedTo, status, dateFrom, dateTo });
 
         const pool = getPool();
         
@@ -637,6 +720,20 @@ exports.getMyTickets = async (req, res) => {
         ];
         let queryParams = [userCategoryId];
         
+        if (assignedTo && assignedTo !== 'null' && assignedTo !== 'undefined') {
+            const assignedToId = parseInt(assignedTo);
+            if (!isNaN(assignedToId)) {
+                whereConditions.push('t.AssignerId = ?');
+                queryParams.push(assignedToId);
+                console.log('✅ Applied assignedTo filter:', assignedToId);
+            }
+        }
+        
+        if (status) {
+            whereConditions.push('t.Status = ?');
+            queryParams.push(status.toUpperCase());
+        }
+        
         if (dateFrom) {
             whereConditions.push('DATE(t.CreatedDate) >= ?');
             queryParams.push(dateFrom);
@@ -648,6 +745,9 @@ exports.getMyTickets = async (req, res) => {
         }
         
         const whereClause = whereConditions.join(' AND ');
+        
+        console.log('🔍 WHERE clause:', whereClause);
+        console.log('📊 Query params:', queryParams);
         
     // Validate and sanitize sort field
     const allowedSortFields = ['createdAt', 'updatedAt', 'status', 'severityLevel', 'fullName'];
