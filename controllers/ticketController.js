@@ -134,11 +134,25 @@ exports.createTicket = async (req, res) => {
                 AND u.roleId = 3
                 LIMIT 1
             `;
+            
+            // Get users with role ID 1 (to be notified on ticket creation)
+            let roleOneQuery = `
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.roleId = 1
+            `;
 
             // Get ticket creator email (robust: try uid -> email raw value -> name)
             let creatorEmail = null;
             const [categoryTeamUsers] = await connection.query(categoryTeamQuery, [category ? parseInt(category) : null]);
             const [itHeadUsers] = await connection.query(itHeadQuery);
+            const [roleOneUsers] = await connection.query(roleOneQuery);
+            
+            console.log(`📋 Email notification recipients found:`);
+            console.log(`   - Category team members: ${categoryTeamUsers.length}`);
+            console.log(`   - IT Head users: ${itHeadUsers.length}`);
+            console.log(`   - Role 1 users: ${roleOneUsers.length}`);
             
             try {
                 // If createdBy looks like a uid, try to resolve user by uid
@@ -157,7 +171,7 @@ exports.createTicket = async (req, res) => {
                 console.error('Error resolving creator email during ticket creation', e.message);
             }
 
-            if (categoryTeamUsers.length > 0 || itHeadUsers.length > 0) {
+            if (categoryTeamUsers.length > 0 || itHeadUsers.length > 0 || roleOneUsers.length > 0) {
                 // Generate ticket number for email
                 const ticketNumber = `TK-${new Date().getFullYear()}-${String(ticketId).padStart(3, '0')}`;
                 
@@ -166,6 +180,7 @@ exports.createTicket = async (req, res) => {
                     SELECT 
                         t.Name as fullName,
                         t.ContactNumber,
+                        t.Email,
                         t.Description,
                         d.Name as departmentName,
                         comp.Name as companyName,
@@ -192,6 +207,7 @@ exports.createTicket = async (req, res) => {
                     assignedTeam: ticket.categoryName || 'General',
                     requesterName: ticket.fullName || fullName || 'N/A',
                     requesterContact: ticket.ContactNumber || contactNumber || 'N/A',
+                    requesterEmail: ticket.Email || email || 'N/A',
                     requesterDepartment: ticket.departmentName || 'N/A',
                     requesterCompany: ticket.companyName || 'N/A',
                     issueType: ticket.issueTypeName || 'N/A',
@@ -213,12 +229,12 @@ exports.createTicket = async (req, res) => {
                 const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
 
                 // Send ticket creation email using Microsoft Graph API
-                // Notify category team members, the ticket creator, and the IT Head. The IT Head template contains approve/reject buttons.
+                // Notify category team members, the ticket creator, role 1 users, and the IT Head. The IT Head template contains approve/reject buttons.
                 try {
                     // Use email from form if provided, otherwise fall back to creatorEmail
                     const notificationEmail = email || creatorEmail;
-                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, notificationEmail, emailAttachments);
-                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, creator)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
+                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, notificationEmail, emailAttachments, roleOneUsers);
+                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, creator, role 1 users)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
                     
                     // Send additional confirmation email to the email address provided in the form if different from creator email
                     if (email && email !== creatorEmail) {
@@ -1008,6 +1024,7 @@ exports.updateTicketStatus = async (req, res) => {
                         CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
                         t.Name as fullName,
                         t.ContactNumber,
+                        t.Email,
                         t.Description,
                         t.Status,
                         t.SeverityLevel as severityLevel,
@@ -1099,6 +1116,7 @@ exports.updateTicketStatus = async (req, res) => {
                         assignedTeam: ticketDetails.categoryName || 'General',
                         requesterName: ticketDetails.fullName || 'N/A',
                         requesterContact: ticketDetails.ContactNumber || 'N/A',
+                        requesterEmail: ticketDetails.Email || 'N/A',
                         requesterDepartment: ticketDetails.departmentName || 'N/A',
                         requesterCompany: ticketDetails.companyName || 'N/A',
                         issueType: ticketDetails.issueTypeName || 'N/A',
@@ -1750,6 +1768,7 @@ exports.approveTicket = async (req, res) => {
                     CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
                     t.Name as fullName,
                     t.ContactNumber,
+                    t.Email,
                     t.Description,
                     t.CreatedDate,
                     t.CategoryId,
@@ -1784,6 +1803,7 @@ exports.approveTicket = async (req, res) => {
                 assignedTeam: info.categoryName || 'General',
                 requesterName: info.fullName || ticket.creatorName || 'User',
                 requesterContact: info.ContactNumber || info.ContactNumber || 'N/A',
+                requesterEmail: info.Email || 'N/A',
                 requesterDepartment: info.departmentName || 'N/A',
                 requesterCompany: info.companyName || 'N/A',
                     issueType: info.issueTypeName || 'N/A',
@@ -1988,6 +2008,7 @@ exports.rejectTicket = async (req, res) => {
                     CONCAT('TK-', YEAR(t.CreatedDate), '-', LPAD(t.Id, 3, '0')) as ticketNumber,
                     t.Name as fullName,
                     t.ContactNumber,
+                    t.Email,
                     t.Description,
                     t.CreatedDate,
                     t.CategoryId,
@@ -2022,6 +2043,7 @@ exports.rejectTicket = async (req, res) => {
                 assignedTeam: info.categoryName || 'General',
                 requesterName: info.fullName || ticket.creatorName || 'User',
                 requesterContact: info.ContactNumber || 'N/A',
+                requesterEmail: info.Email || 'N/A',
                 requesterDepartment: info.departmentName || 'N/A',
                 requesterCompany: info.companyName || 'N/A',
                     issueType: info.issueTypeName || 'N/A',

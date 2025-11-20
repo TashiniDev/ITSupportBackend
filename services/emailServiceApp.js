@@ -337,16 +337,16 @@ class EmailServiceApp {
      * @param {string} itHeadEmail - Email of the IT head
      * @param {string} ticketCreatorEmail - Email of the ticket creator
      * @param {Array} attachments - Array of attachment objects with name, contentType, and contentBytes
+     * @param {Array} roleOneUsers - Array of users with role ID 1 to be notified
      */
-    async sendTicketCreationEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, attachments = []) {
+    async sendTicketCreationEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, attachments = [], roleOneUsers = []) {
         const {
             ticketId,
             category,
             assignedTeam,
             requesterName,
             requesterContact,
-            requesterDepartment,
-            requesterCompany,
+            requesterEmail,
             issueType,
             assignedTo,
             assignedDate,
@@ -431,8 +431,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#92400e; font-size:14px;">
                                 <div><strong>Name:</strong> ${requesterName}</div>
                                 <div><strong>Contact:</strong> ${requesterContact}</div>
-                                <div><strong>Department:</strong> ${requesterDepartment}</div>
-                                <div><strong>Company:</strong> ${requesterCompany}</div>
+                                <div><strong>Email:</strong> ${requesterEmail}</div>
                             </div>
                         </div>
 
@@ -514,8 +513,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#065f46; font-size:14px;">
                                 <div><strong>Name:</strong> ${requesterName}</div>
                                 <div><strong>Contact:</strong> ${requesterContact}</div>
-                                <div><strong>Department:</strong> ${requesterDepartment}</div>
-                                <div><strong>Company:</strong> ${requesterCompany}</div>
+                                <div><strong>Email:</strong> ${requesterEmail}</div>
                             </div>
                         </div>
 
@@ -622,6 +620,23 @@ class EmailServiceApp {
                 await this.sendEmailAsUser(creatorEmailData);
                 console.log(`📧 Ticket confirmation email sent to creator at ${ticketCreatorEmail}`);
             }
+            
+            // Send notification email to all users with role ID 1
+            if (roleOneUsers && roleOneUsers.length > 0) {
+                console.log(`📧 Sending emails to ${roleOneUsers.length} role 1 users...`);
+                for (const roleOneUser of roleOneUsers) {
+                    const roleOneEmailData = {
+                        to: roleOneUser.email,
+                        toName: roleOneUser.name,
+                        subject: `New Ticket Created - ${ticketId} (${category})`,
+                        body: assigneeTemplate,
+                        contentType: 'HTML',
+                        attachments: attachments
+                    };
+                    await this.sendEmailAsUser(roleOneEmailData);
+                    console.log(`📧 Ticket notification email sent to role 1 user ${roleOneUser.name} (${roleOneUser.email})`);
+                }
+            }
 
             return {
                 success: true,
@@ -651,8 +666,7 @@ class EmailServiceApp {
             assignedTeam,
             requesterName,
             requesterContact,
-            requesterDepartment,
-            requesterCompany,
+            requesterEmail,
             issueType,
             assignedTo,
             createdDate,
@@ -720,8 +734,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#92400e; font-size:14px;">
                                 <div><strong>Name:</strong> ${requesterName}</div>
                                 <div><strong>Contact:</strong> ${requesterContact}</div>
-                                <div><strong>Department:</strong> ${requesterDepartment}</div>
-                                <div><strong>Company:</strong> ${requesterCompany}</div>
+                                <div><strong>Email:</strong> ${requesterEmail}</div>
                             </div>
                         </div>
 
@@ -791,8 +804,7 @@ class EmailServiceApp {
                                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#92400e; font-size:14px; margin-top:10px;">
                                     <div><strong>Name:</strong> ${requesterName}</div>
                                     <div><strong>Contact:</strong> ${requesterContact}</div>
-                                    <div><strong>Department:</strong> ${requesterDepartment}</div>
-                                    <div><strong>Company:</strong> ${requesterCompany}</div>
+                                    <div><strong>Email:</strong> ${requesterEmail}</div>
                                 </div>
                             </div>
 
@@ -967,8 +979,7 @@ class EmailServiceApp {
             category,
             requesterName,
             requesterContact,
-            requesterDepartment,
-            requesterCompany,
+            requesterEmail,
             description,
             createdDate
         } = ticketData;
@@ -1016,8 +1027,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#92400e; font-size:14px; margin-top:10px;">
                                 <div><strong>Name:</strong> ${requesterName}</div>
                                 <div><strong>Contact:</strong> ${requesterContact}</div>
-                                <div><strong>Department:</strong> ${requesterDepartment}</div>
-                                <div><strong>Company:</strong> ${requesterCompany}</div>
+                                <div><strong>Email:</strong> ${requesterEmail}</div>
                             </div>
                         </div>
 
@@ -1074,8 +1084,7 @@ class EmailServiceApp {
             category,
             requesterName,
             requesterContact,
-            requesterDepartment,
-            requesterCompany,
+            requesterEmail,
             description,
             createdDate
         } = ticketData;
@@ -1123,8 +1132,7 @@ class EmailServiceApp {
                             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#92400e; font-size:14px; margin-top:10px;">
                                 <div><strong>Name:</strong> ${requesterName}</div>
                                 <div><strong>Contact:</strong> ${requesterContact}</div>
-                                <div><strong>Department:</strong> ${requesterDepartment}</div>
-                                <div><strong>Company:</strong> ${requesterCompany}</div>
+                                <div><strong>Email:</strong> ${requesterEmail}</div>
                             </div>
                         </div>
 
