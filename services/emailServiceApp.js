@@ -630,7 +630,7 @@ class EmailServiceApp {
                 console.log(`📧 Ticket confirmation email sent to creator at ${ticketCreatorEmail}`);
             }
             
-            // Send notification email to all users with role ID 1 (but NOT to the requester)
+            // Send notification email to all users with role ID 1 (but NOT to the requester or ticket creator)
             if (roleOneUsers && roleOneUsers.length > 0) {
                 console.log(`📧 Sending emails to ${roleOneUsers.length} role 1 users...`);
                 for (const roleOneUser of roleOneUsers) {
@@ -638,8 +638,17 @@ class EmailServiceApp {
                     const isRequester = roleOneUser.email && requesterEmail && 
                                        roleOneUser.email.toLowerCase() === requesterEmail.toLowerCase();
                     
+                    // Skip sending to the ticket creator (they already received the creator email)
+                    const isCreator = roleOneUser.email && ticketCreatorEmail && 
+                                     roleOneUser.email.toLowerCase() === ticketCreatorEmail.toLowerCase();
+                    
                     if (isRequester) {
                         console.log(`⏭️ Skipping role 1 email for requester ${roleOneUser.email} - will receive confirmation email instead`);
+                        continue;
+                    }
+                    
+                    if (isCreator) {
+                        console.log(`⏭️ Skipping role 1 email for ticket creator ${roleOneUser.email} - already received creator confirmation email`);
                         continue;
                     }
                     
