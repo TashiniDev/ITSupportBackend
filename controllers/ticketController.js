@@ -187,7 +187,8 @@ exports.createTicket = async (req, res) => {
                         c.Name as categoryName,
                         it.Name as issueTypeName,
                         rt.Name as requestTypeName,
-                        u.Name as assignedToName
+                        u.Name as assignedToName,
+                        u.email as assignedToEmail
                     FROM ticket t
                     LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
                     LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
@@ -231,14 +232,22 @@ exports.createTicket = async (req, res) => {
                 // Send ticket creation email using Microsoft Graph API
                 // Notify category team members, the ticket creator, role 1 users, and the IT Head. The IT Head template contains approve/reject buttons.
                 try {
-                    // Use email from form if provided, otherwise fall back to creatorEmail
-                    const notificationEmail = email || creatorEmail;
-                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, notificationEmail, emailAttachments, roleOneUsers);
-                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, creator, role 1 users)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
+                    // Only send to ticket creator if they are different from the requester
+                    // The requester will get a separate confirmation email below
+                    const ticketCreatorEmailToSend = (creatorEmail && email && creatorEmail.toLowerCase() !== email.toLowerCase()) 
+                        ? creatorEmail 
+                        : null;
                     
-                    // Send additional confirmation email to the email address provided in the form if different from creator email
-                    if (email && email !== creatorEmail) {
+                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, ticketCreatorEmailToSend, emailAttachments, roleOneUsers);
+                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, ${ticketCreatorEmailToSend ? 'creator, ' : ''}role 1 users)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
+                    
+                    // Always send confirmation email to the requester (email from form)
+                    if (email) {
                         try {
+                            // Determine whether to show Request Type or Issue Type
+                            const hasRequestType = ticket.requestTypeName && String(ticket.requestTypeName).trim().toLowerCase() !== 'n/a';
+                            const hasIssueType = ticket.issueTypeName && String(ticket.issueTypeName).trim().toLowerCase() !== 'n/a';
+                            
                             const confirmationEmailData = {
                                 to: email,
                                 toName: fullName || 'User',
@@ -259,16 +268,25 @@ exports.createTicket = async (req, res) => {
                                                         <div style="margin-bottom:10px;"><strong>Ticket ID:</strong> ${ticketNumber}</div>
                                                         <div style="margin-bottom:10px;"><strong>Category:</strong> ${ticket.categoryName || 'Uncategorized'}</div>
                                                         <div style="margin-bottom:10px;"><strong>Assigned To:</strong> ${ticket.assignedToName || 'Unassigned'}</div>
-                                                        <div style="margin-bottom:10px;"><strong>Issue Type:</strong> ${ticket.issueTypeName || 'N/A'}</div>
+                                                        ${ticket.assignedToEmail ? `<div style="margin-bottom:10px;"><strong>Assignee Email:</strong> ${ticket.assignedToEmail}</div>` : ''}
+                                                        ${hasRequestType ? `<div style="margin-bottom:10px;"><strong>Request Type:</strong> ${ticket.requestTypeName}</div>` : (hasIssueType ? `<div style="margin-bottom:10px;"><strong>Issue Type:</strong> ${ticket.issueTypeName}</div>` : '')}
                                                         <div style="margin-bottom:10px;"><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${formatSeverityForFrontend(dbSeverity)}</span></div>
                                                         <div style="margin-bottom:10px;"><strong>Status:</strong> NEW</div>
-                                                        <div style="margin-bottom:10px;"><strong>Created:</strong> ${new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}</div>
                                                     </div>
                                                 </div>
                                                 
                                                 <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:20px 25px; border-radius:10px; margin:25px 0;">
                                                     <h4 style="color:#2d3748; margin:0 0 10px 0; font-size:16px;">Description:</h4>
                                                     <p style="color:#4a5568; margin:0; font-size:14px; white-space:pre-wrap;">${ticket.Description || description || 'No description provided'}</p>
+                                                </div>
+                                                
+                                                <div style="background:#e0f2fe; border:1px solid #81d4fa; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                                                    <h4 style="color:#0277bd; margin:0 0 10px 0; font-size:16px;">Timeline</h4>
+                                                    <div style="color:#0277bd; font-size:14px;">
+                                                        <div style="margin-bottom:5px;"><strong>📅 Created:</strong> ${new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}</div>
+                                                        <div style="margin-bottom:5px;"><strong>📋 Assigned on:</strong> ${new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}</div>
+                                                        <div><strong>🕐 Last Updated:</strong> ${new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()}</div>
+                                                    </div>
                                                 </div>
                                                 
                                                 <p style="color:#64748b; margin-top:25px; font-size:14px;">

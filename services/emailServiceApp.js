@@ -577,9 +577,18 @@ class EmailServiceApp {
         `;
 
         try {
-            // Send email to all team members in this category
+            // Send email to all team members in this category (but NOT to the requester)
             if (categoryTeamMembers && categoryTeamMembers.length > 0) {
                 for (const teamMember of categoryTeamMembers) {
+                    // Skip sending category team email to the requester
+                    const isRequester = teamMember.email && requesterEmail && 
+                                       teamMember.email.toLowerCase() === requesterEmail.toLowerCase();
+                    
+                    if (isRequester) {
+                        console.log(`⏭️ Skipping category team email for requester ${teamMember.email} - will send confirmation email instead`);
+                        continue;
+                    }
+                    
                     const memberEmailData = {
                         to: teamMember.email,
                         toName: teamMember.name,
@@ -621,10 +630,19 @@ class EmailServiceApp {
                 console.log(`📧 Ticket confirmation email sent to creator at ${ticketCreatorEmail}`);
             }
             
-            // Send notification email to all users with role ID 1
+            // Send notification email to all users with role ID 1 (but NOT to the requester)
             if (roleOneUsers && roleOneUsers.length > 0) {
                 console.log(`📧 Sending emails to ${roleOneUsers.length} role 1 users...`);
                 for (const roleOneUser of roleOneUsers) {
+                    // Skip sending to the requester
+                    const isRequester = roleOneUser.email && requesterEmail && 
+                                       roleOneUser.email.toLowerCase() === requesterEmail.toLowerCase();
+                    
+                    if (isRequester) {
+                        console.log(`⏭️ Skipping role 1 email for requester ${roleOneUser.email} - will receive confirmation email instead`);
+                        continue;
+                    }
+                    
                     const roleOneEmailData = {
                         to: roleOneUser.email,
                         toName: roleOneUser.name,
