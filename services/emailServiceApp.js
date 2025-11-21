@@ -906,7 +906,25 @@ class EmailServiceApp {
                 );
             };
 
-            // Send email to ticket creator (tailored template) FIRST so they always receive the user-friendly notification
+            // Send email to requester FIRST (the person who submitted the ticket from the form)
+            if (requesterEmail && requesterEmail.toLowerCase() !== 'n/a' && requesterEmail.includes('@')) {
+                const requesterAddr = (requesterEmail || '').toLowerCase().trim();
+                if (requesterAddr) {
+                    console.log(`📝 Queueing email to requester (ticket submitter): ${requesterAddr}`);
+                    const requesterEmailData = {
+                        to: requesterAddr,
+                        toName: requesterName,
+                        subject: `Your Ticket Update - ${ticketId} (${newStatus})`,
+                        body: creatorTemplate, // Use user-friendly template for requester
+                        contentType: 'HTML'
+                    };
+                    queueEmail(requesterEmailData, 'requester');
+                }
+            } else {
+                console.log(`ℹ️ No requester email to notify`);
+            }
+
+            // Send email to ticket creator (tailored template) - only if different from requester
             if (ticketCreatorEmail) {
                 const creatorAddr = (ticketCreatorEmail || '').toLowerCase().trim();
                 if (creatorAddr) {

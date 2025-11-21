@@ -2256,6 +2256,110 @@ exports.updateTicketToProcessing = async (req, res) => {
         
         console.log(`✅ Ticket ${updatedTicket.ticketNumber} status changed from ${currentStatus} to PROCESSING by ${updatedBy}`);
         
+        // Send email notifications for status change
+        try {
+            const emailServiceApp = require('../services/emailServiceApp');
+            
+            // Get comprehensive ticket details for email
+            const [ticketDetails] = await pool.query(`
+                SELECT 
+                    t.Name as fullName,
+                    t.ContactNumber,
+                    t.Email,
+                    t.Description,
+                    t.SeverityLevel,
+                    d.Name as departmentName,
+                    comp.Name as companyName,
+                    c.Name as categoryName,
+                    it.Name as issueTypeName,
+                    rt.Name as requestTypeName,
+                    u.Name as assignedToName,
+                    u.email as assignedToEmail,
+                    t.CreatedBy
+                FROM ticket t
+                LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
+                LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
+                LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
+                LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
+                LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
+                LEFT JOIN user u ON t.AssignerId = u.Id AND u.IsActive = 1
+                WHERE t.Id = ?
+            `, [parseInt(id)]);
+            
+            const ticket = ticketDetails[0] || {};
+            
+            // Get category team members
+            const [categoryTeamUsers] = await pool.query(`
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.categoryId = ?
+            `, [ticket.categoryName ? await getCategoryId(pool, ticket.categoryName) : null]);
+            
+            // Get IT Head
+            const [itHeadUsers] = await pool.query(`
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.roleId = 3
+                LIMIT 1
+            `);
+            
+            // Get ticket creator email
+            let creatorEmail = null;
+            if (ticket.CreatedBy) {
+                const [creatorByUid] = await pool.query(
+                    `SELECT email, name FROM user WHERE uid = ? AND IsActive = 1 LIMIT 1`,
+                    [ticket.CreatedBy]
+                );
+                if (creatorByUid && creatorByUid.length > 0 && creatorByUid[0].email) {
+                    creatorEmail = creatorByUid[0].email;
+                } else if (ticket.CreatedBy.includes('@')) {
+                    creatorEmail = ticket.CreatedBy;
+                }
+            }
+            
+            const ticketData = {
+                ticketId: updatedTicket.ticketNumber,
+                category: ticket.categoryName || 'Uncategorized',
+                assignedTeam: ticket.categoryName || 'General',
+                requesterName: ticket.fullName || 'N/A',
+                requesterContact: ticket.ContactNumber || 'N/A',
+                requesterEmail: ticket.Email || 'N/A',
+                requesterDepartment: ticket.departmentName || 'N/A',
+                requesterCompany: ticket.companyName || 'N/A',
+                issueType: ticket.issueTypeName || 'N/A',
+                requestType: ticket.requestTypeName || 'N/A',
+                assignedTo: ticket.assignedToName || 'Unassigned',
+                createdDate: new Date(updatedTicket.UpdatedDate).toLocaleDateString() + ' ' + new Date(updatedTicket.UpdatedDate).toLocaleTimeString(),
+                updatedDate: new Date(updatedTicket.UpdatedDate).toLocaleDateString() + ' ' + new Date(updatedTicket.UpdatedDate).toLocaleTimeString(),
+                description: ticket.Description || 'No description provided',
+                severityLevel: ticket.SeverityLevel || 'LOW'
+            };
+            
+            const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+            
+            // Only send to ticket creator if different from requester
+            const ticketCreatorEmailToSend = (creatorEmail && ticket.Email && creatorEmail.toLowerCase() !== ticket.Email.toLowerCase()) 
+                ? creatorEmail 
+                : null;
+            
+            await emailServiceApp.sendTicketStatusUpdateEmail(
+                ticketData,
+                categoryTeamUsers,
+                itHeadEmail,
+                ticketCreatorEmailToSend,
+                currentStatus,
+                'PROCESSING',
+                updatedBy
+            );
+            
+            console.log(`📧 Status update emails sent for ticket ${updatedTicket.ticketNumber}`);
+        } catch (emailError) {
+            console.error('Error sending status update emails:', emailError);
+            // Don't fail the request if email fails
+        }
+        
         res.status(200).json({
             success: true,
             message: 'Ticket status updated to PROCESSING successfully',
@@ -2278,6 +2382,13 @@ exports.updateTicketToProcessing = async (req, res) => {
         });
     }
 };
+
+// Helper function to get category ID
+async function getCategoryId(pool, categoryName) {
+    if (!categoryName) return null;
+    const [result] = await pool.query('SELECT Id FROM category WHERE Name = ? AND IsActive = 1 LIMIT 1', [categoryName]);
+    return result.length > 0 ? result[0].Id : null;
+}
 
 /**
  * Update ticket status to COMPLETED
@@ -2375,6 +2486,110 @@ exports.updateTicketToCompleted = async (req, res) => {
         const updatedTicket = updatedTicketRows[0];
         
         console.log(`✅ Ticket ${updatedTicket.ticketNumber} status changed from ${currentStatus} to COMPLETED by ${updatedBy}`);
+        
+        // Send email notifications for status change
+        try {
+            const emailServiceApp = require('../services/emailServiceApp');
+            
+            // Get comprehensive ticket details for email
+            const [ticketDetails] = await pool.query(`
+                SELECT 
+                    t.Name as fullName,
+                    t.ContactNumber,
+                    t.Email,
+                    t.Description,
+                    t.SeverityLevel,
+                    d.Name as departmentName,
+                    comp.Name as companyName,
+                    c.Name as categoryName,
+                    it.Name as issueTypeName,
+                    rt.Name as requestTypeName,
+                    u.Name as assignedToName,
+                    u.email as assignedToEmail,
+                    t.CreatedBy
+                FROM ticket t
+                LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
+                LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
+                LEFT JOIN category c ON t.CategoryId = c.Id AND c.IsActive = 1
+                LEFT JOIN issuetype it ON t.IssueId = it.Id AND it.IsActive = 1
+                LEFT JOIN requesttype rt ON t.RequestTypeId = rt.Id AND rt.IsActive = 1
+                LEFT JOIN user u ON t.AssignerId = u.Id AND u.IsActive = 1
+                WHERE t.Id = ?
+            `, [parseInt(id)]);
+            
+            const ticket = ticketDetails[0] || {};
+            
+            // Get category team members
+            const [categoryTeamUsers] = await pool.query(`
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.categoryId = ?
+            `, [ticket.categoryName ? await getCategoryId(pool, ticket.categoryName) : null]);
+            
+            // Get IT Head
+            const [itHeadUsers] = await pool.query(`
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.roleId = 3
+                LIMIT 1
+            `);
+            
+            // Get ticket creator email
+            let creatorEmail = null;
+            if (ticket.CreatedBy) {
+                const [creatorByUid] = await pool.query(
+                    `SELECT email, name FROM user WHERE uid = ? AND IsActive = 1 LIMIT 1`,
+                    [ticket.CreatedBy]
+                );
+                if (creatorByUid && creatorByUid.length > 0 && creatorByUid[0].email) {
+                    creatorEmail = creatorByUid[0].email;
+                } else if (ticket.CreatedBy.includes('@')) {
+                    creatorEmail = ticket.CreatedBy;
+                }
+            }
+            
+            const ticketData = {
+                ticketId: updatedTicket.ticketNumber,
+                category: ticket.categoryName || 'Uncategorized',
+                assignedTeam: ticket.categoryName || 'General',
+                requesterName: ticket.fullName || 'N/A',
+                requesterContact: ticket.ContactNumber || 'N/A',
+                requesterEmail: ticket.Email || 'N/A',
+                requesterDepartment: ticket.departmentName || 'N/A',
+                requesterCompany: ticket.companyName || 'N/A',
+                issueType: ticket.issueTypeName || 'N/A',
+                requestType: ticket.requestTypeName || 'N/A',
+                assignedTo: ticket.assignedToName || 'Unassigned',
+                createdDate: new Date(updatedTicket.UpdatedDate).toLocaleDateString() + ' ' + new Date(updatedTicket.UpdatedDate).toLocaleTimeString(),
+                updatedDate: new Date(updatedTicket.UpdatedDate).toLocaleDateString() + ' ' + new Date(updatedTicket.UpdatedDate).toLocaleTimeString(),
+                description: ticket.Description || 'No description provided',
+                severityLevel: ticket.SeverityLevel || 'LOW'
+            };
+            
+            const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+            
+            // Only send to ticket creator if different from requester
+            const ticketCreatorEmailToSend = (creatorEmail && ticket.Email && creatorEmail.toLowerCase() !== ticket.Email.toLowerCase()) 
+                ? creatorEmail 
+                : null;
+            
+            await emailServiceApp.sendTicketStatusUpdateEmail(
+                ticketData,
+                categoryTeamUsers,
+                itHeadEmail,
+                ticketCreatorEmailToSend,
+                currentStatus,
+                'COMPLETED',
+                updatedBy
+            );
+            
+            console.log(`📧 Status update emails sent for ticket ${updatedTicket.ticketNumber}`);
+        } catch (emailError) {
+            console.error('Error sending status update emails:', emailError);
+            // Don't fail the request if email fails
+        }
         
         res.status(200).json({
             success: true,

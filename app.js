@@ -80,6 +80,13 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // of this Node.js server project (where server.js resides).
 app.use(express.static(path.join(__dirname, 'build')));
 
+// Ensure a favicon is served for requests that open raw files (e.g. /uploads/xxx)
+// Browsers will request /favicon.ico when opening a direct file URL — redirect/serve
+// the app's help-desk icon so attachment-only pages show the correct favicon.
+app.get('/favicon.ico', (req, res) => {
+    return res.sendFile(path.join(__dirname, 'build', 'help-desk-icon-8.ico'));
+});
+
 // Simple server-side reset-password page (fallback)
 // If your frontend doesn't implement a /reset-password page, users can use this
 // HTML page (reached from an emailed link) to set a new password.
@@ -98,7 +105,7 @@ app.get('/reset-password', (req, res) => {
         <div class="card">
             <h2>Reset your password</h2>
             <p>Enter a new password for your account.</p>
-            <input id="password" type="password" placeholder="New password (min 6)" />
+            <input id="password" type="password" placeholder="New password (min 8, uppercase, lowercase, number, special char)" />
             <button id="submit">Set new password</button>
             <div class="msg" id="msg"></div>
         </div>
