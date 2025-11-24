@@ -262,7 +262,7 @@ class EmailServiceApp {
                     <div style="padding:25px 30px; background:linear-gradient(135deg, #dc2626 0%, #ef4444 100%); color:#ffffff; display:flex; align-items:center; gap:15px; border-bottom:1px solid #dc2626;">
                         <div style="width:50px;height:50px;border-radius:10px;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px; flex-shrink:0;">
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M12 1l3 6 6 1-4.5 4 1 6L12 17l-5.5 3 1-6L3 9l6-1 3-6z" fill="currentColor"/>
+                                <path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" stroke="#dc2626" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
                         </div>
                         <div>
@@ -357,6 +357,10 @@ class EmailServiceApp {
             severityLevel
         } = ticketData;
 
+    // Optional fields (status-specific variable names to avoid collisions)
+    const statusRejectionReason = ticketData.rejectionReason || ticketData.rejection_reason || '';
+    const statusApprovalComments = ticketData.approvalComments || ticketData.approval_comments || '';
+
     // Normalize presence checks: treat 'N/A' (case-insensitive) as not provided
     const hasRequestType = ticketData.requestType && String(ticketData.requestType).trim().toLowerCase() !== 'n/a';
     const hasIssueType = issueType && String(issueType).trim().toLowerCase() !== 'n/a';
@@ -413,7 +417,8 @@ class EmailServiceApp {
                                 </svg>
                                 ${ticketData.approvalStatus === 'APPROVED' ? '✅ Ticket Approved' : '❌ Ticket Rejected'}
                             </h4>
-                            <div style="color:${ticketData.approvalStatus === 'APPROVED' ? '#065f46' : '#dc2626'}; font-size:14px;">
+                            <!-- Use a neutral, high-contrast body text color for readability on both approved and rejected backgrounds. Keep the header color as the visual status indicator. -->
+                            <div style="color:${ticketData.approvalStatus === 'APPROVED' ? '#065f46' : '#374151'}; font-size:14px;">
                                 <div><strong>${ticketData.approvalStatus === 'APPROVED' ? 'Approved' : 'Rejected'} By:</strong> ${ticketData.approverName || 'IT Head'}</div>
                                 <div><strong>Date:</strong> ${ticketData.approvalDate || new Date().toLocaleDateString()}</div>
                                 ${ticketData.approvalComments ? `<div style="margin-top:10px;"><strong>Comments:</strong> ${ticketData.approvalComments}</div>` : ''}
@@ -519,7 +524,7 @@ class EmailServiceApp {
 
                         <div style="background:#fef2f2; border:1px solid #fecaca; padding:20px 25px; border-radius:10px; margin:25px 0;">
                             <h4 style="color:#dc2626; margin:0 0 10px 0; font-size:16px;">Assignment Status</h4>
-                            <p style="color:#dc2626; margin:0; font-size:14px;">
+                            <p style="color:#374151; margin:0; font-size:14px;">
                                 This ticket has been automatically assigned to <strong>${assignedTo}</strong> from the <strong>${assignedTeam}</strong> team based on the selected category.
                             </p>
                         </div>
@@ -686,7 +691,7 @@ class EmailServiceApp {
      * @param {string} newStatus - The new status of the ticket
      * @param {string} updatedBy - Who updated the status
      */
-    async sendTicketStatusUpdateEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, previousStatus, newStatus, updatedBy) {
+    async sendTicketStatusUpdateEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, previousStatus, newStatus, updatedBy, roleOneUsers = []) {
         const {
             ticketId,
             category,
@@ -702,6 +707,10 @@ class EmailServiceApp {
             description,
             severityLevel = 'LOW'
         } = ticketData;
+
+        // Optional fields (status-specific variable names to avoid collisions)
+        const statusRejectionReason = ticketData.rejectionReason || ticketData.rejection_reason || '';
+        const statusApprovalComments = ticketData.approvalComments || ticketData.approval_comments || '';
 
         // Determine status color and icon based on new status
         let statusColor = '#6b7280';
@@ -840,9 +849,9 @@ class EmailServiceApp {
                                 <p style="color:#4a5568; margin:0; font-size:14px; white-space:pre-wrap;">${description}</p>
                             </div>` : ''}
 
-                            ${rejectionReason ? `<div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                            ${statusRejectionReason ? `<div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
                                 <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px;">Rejection Reason:</h4>
-                                <p style="color:#92400e; margin:0; font-size:14px; white-space:pre-wrap;">${rejectionReason}</p>
+                                <p style="color:#92400e; margin:0; font-size:14px; white-space:pre-wrap;">${statusRejectionReason}</p>
                             </div>` : ''}
                         ` : ''}
 
@@ -883,6 +892,37 @@ class EmailServiceApp {
         try {
             const emailPromises = [];
             console.log(`📧 Starting email sending process for ticket status update...`);
+
+            // DEBUG: Log recipient source counts to help troubleshoot missing emails
+            try {
+                const teamCount = Array.isArray(categoryTeamMembers) ? categoryTeamMembers.length : 0;
+                const role1Count = Array.isArray(roleOneUsers) ? roleOneUsers.length : 0;
+                console.log(`🔍 Recipient counts -> categoryTeamMembers: ${teamCount}, roleOneUsers: ${role1Count}, itHeadEmail: ${itHeadEmail || 'none'}, ticketCreatorEmail: ${ticketCreatorEmail || 'none'}, requesterEmail: ${requesterEmail || 'none'}`);
+                // list a few addresses for quick debugging
+                const sampleAddrs = [];
+                if (Array.isArray(categoryTeamMembers)) sampleAddrs.push(...categoryTeamMembers.slice(0,5).map(u=>u.email));
+                if (Array.isArray(roleOneUsers)) sampleAddrs.push(...roleOneUsers.slice(0,5).map(u=>u.email));
+                console.log(`🔍 Sample addresses: ${sampleAddrs.filter(Boolean).join(', ')}`);
+            } catch (dbgErr) {
+                console.error('🔍 Error while logging recipient debug info:', dbgErr);
+            }
+
+            // Log recipients for debugging
+        console.log('📧 Debugging Email Recipients:', {
+            categoryTeamMembers,
+            itHeadEmail,
+            ticketCreatorEmail,
+            roleOneUsers
+        });
+
+        // Log ticket data for debugging
+        console.log('📧 Debugging Ticket Data:', ticketData);
+
+        // Log email templates for debugging
+        console.log('📧 Debugging Email Templates:', {
+            statusUpdateTemplate,
+            creatorTemplate
+        });
 
             // Build a deduplicated list of recipients and send appropriate templates
             const sentEmails = new Set();
@@ -994,6 +1034,33 @@ class EmailServiceApp {
                 console.log(`ℹ️ No IT Head to notify`);
             }
 
+            // Also notify users with role ID 1 (if provided) using the same status update template
+            if (roleOneUsers && Array.isArray(roleOneUsers) && roleOneUsers.length > 0) {
+                console.log(`📧 Queueing ${roleOneUsers.length} role-1 users for status update notifications`);
+                for (const rUser of roleOneUsers) {
+                    const addr = (rUser.email || '').toLowerCase().trim();
+                    if (!addr) continue;
+                    // Avoid notifying the ticket creator twice (they receive tailored creatorTemplate)
+                    if (ticketCreatorEmail && addr === (ticketCreatorEmail || '').toLowerCase().trim()) {
+                        console.log(`ℹ️ Skipping role-1 user ${addr} because they are the ticket creator (already queued).`);
+                        continue;
+                    }
+                    // Skip IT Head (already queued)
+                    if (itHeadEmail && addr === (itHeadEmail || '').toLowerCase().trim()) {
+                        console.log(`ℹ️ Skipping role-1 user ${addr} because they are the IT Head (already queued).`);
+                        continue;
+                    }
+                    const roleOneEmailData = {
+                        to: addr,
+                        toName: rUser.name || addr,
+                        subject: `Ticket Status Update - ${ticketData.ticketId} (${newStatus})`,
+                        body: statusUpdateTemplate,
+                        contentType: 'HTML'
+                    };
+                    queueEmail(roleOneEmailData, `role1:${addr}`);
+                }
+            }
+
             // Wait for all emails to be sent
             console.log(`⏳ Waiting for ${emailPromises.length} emails to be sent...`);
             await Promise.all(emailPromises);
@@ -1028,6 +1095,39 @@ class EmailServiceApp {
             description,
             createdDate
         } = ticketData;
+        // Determine whether this recipient is the original requester (form email)
+        // Be forgiving: match either email or name (case-insensitive) to handle cases where
+        // recipient comes from a user record or the form email.
+        const isRequester = (
+            (requesterEmail && recipientEmail && String(requesterEmail).toLowerCase() === String(recipientEmail).toLowerCase()) ||
+            (requesterName && recipientName && String(requesterName).toLowerCase() === String(recipientName).toLowerCase())
+        );
+
+        // Tailor intro and next-steps text based on recipient role (requester vs other recipients)
+        const introParagraph = isRequester
+            ? `Good news! Your support ticket has been approved by <strong>${approverName}</strong> and will now proceed to the assigned team for processing.`
+            : `Ticket <strong>${ticketId}</strong> has been approved by <strong>${approverName}</strong>. This is an informational notification for your awareness.`;
+
+        const nextStepsParagraph = isRequester
+            ? `Related by this`
+            : ``;
+
+        // Build a fuller Ticket Information block (used for both requesters and non-requesters)
+        const ticketInfoHtml = `
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                <h3 style="color:#065f46; margin:0 0 15px 0; font-size:18px;">Ticket Information</h3>
+                <div style="color:#065f46; font-size:14px;">
+                    <div style="margin-bottom:8px;"><strong>Ticket ID:</strong> ${ticketId}</div>
+                    <div style="margin-bottom:8px;"><strong>Category:</strong> ${category || 'N/A'}</div>
+                    <div style="margin-bottom:8px;"><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${ticketData.severityLevel || 'N/A'}</span></div>
+                    <div style="margin-bottom:8px;"><strong>Request Type:</strong> ${ticketData.requestType || 'N/A'}</div>
+                    <div style="margin-bottom:8px;"><strong>Assigned Team:</strong> ${ticketData.assignedTeam || 'N/A'}</div>
+                    <div style="margin-bottom:8px;"><strong>Assigned To:</strong> ${ticketData.assignedTo || 'Unassigned'}</div>
+                    ${ticketData.assignedToEmail ? `<div style="margin-bottom:8px;"><strong>Assignee Email:</strong> ${ticketData.assignedToEmail}</div>` : ''}
+                    ${ticketData.status ? `<div style="margin-bottom:8px;"><strong>Status:</strong> <span style="background:#dcfce7; color:#065f46; padding:2px 8px; border-radius:4px; font-size:12px;">${ticketData.status}</span></div>` : ''}
+                </div>
+            </div>
+        `;
 
         const approvalTemplate = `
             <div style="font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif; background-color:#f0f2f5; padding:30px; line-height:1.6; color:#333;">
@@ -1045,27 +1145,9 @@ class EmailServiceApp {
                     </div>
                     <div style="padding:30px;">
                         <h2 style="color:#1a202c; margin:0 0 10px 0; font-size:26px; font-weight:700;">✅ Ticket Approved</h2>
-                        <p style="color:#4a5568; margin:0 0 20px 0; font-size:16px;">Good news! Your support ticket has been approved by <strong>${approverName}</strong> and will be processed by our team.</p>
+                        <p style="color:#4a5568; margin:0 0 20px 0; font-size:16px;">${introParagraph}</p>
 
-                        <div style="background:#f0fdf4; border:1px solid #bbf7d0; padding:20px 25px; border-radius:10px; margin:25px 0;">
-                            <h3 style="color:#065f46; margin:0 0 15px 0; font-size:18px; display:flex; align-items:center; gap:8px;">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke="#065f46" stroke-width="1.5"/>
-                                </svg>
-                                Ticket Details
-                            </h3>
-                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; color:#065f46;">
-                                <div><strong>Ticket ID:</strong> ${ticketId}</div>
-                                <div><strong>Category:</strong> ${category}</div>
-                                <div><strong>Approved By:</strong> ${approverName}</div>
-                                <div><strong>Approval Date:</strong> ${new Date().toLocaleDateString()}</div>
-                            </div>
-                        </div>
-
-                        <div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
-                            <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px;">Next Steps:</h4>
-                            <p style="color:#92400e; margin:0; font-size:14px;">Your ticket will now be assigned to the appropriate team member for processing. You will receive updates as work progresses on your request.</p>
-                        </div>
+                        ${ticketInfoHtml}
 
                         <div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
                             <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px;">Requester Information</h4>
@@ -1086,9 +1168,7 @@ class EmailServiceApp {
                             <p style="color:#0277bd; margin:0; font-size:14px; white-space:pre-wrap;">${approvalComments}</p>
                         </div>` : ''}
 
-                        <p style="text-align:center; margin:30px 0;">
-                            <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/${ticketId}" style="background-color:#059669;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Ticket Status</a>
-                        </p>
+                        ${!isRequester ? `<p style="text-align:center; margin:30px 0;"><a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/${ticketId}" style="background-color:#059669;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Ticket Status</a></p>` : ''}
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
                             Thank you for using our IT Support System. If you have any questions, please don't hesitate to contact us.
@@ -1133,6 +1213,40 @@ class EmailServiceApp {
             description,
             createdDate
         } = ticketData;
+        // Determine whether this recipient is the original requester (form email)
+        // Be forgiving: match either email or name (case-insensitive) to handle cases where
+        // recipient comes from a user record or the form email.
+        const isRequester = (
+            (requesterEmail && recipientEmail && String(requesterEmail).toLowerCase() === String(recipientEmail).toLowerCase()) ||
+            (requesterName && recipientName && String(requesterName).toLowerCase() === String(recipientName).toLowerCase())
+        );
+
+        // Tailor intro and next-steps text based on recipient role (requester vs other recipients)
+        const introParagraph = isRequester
+            ? `We regret to inform you that your support ticket has been rejected by <strong>${rejectorName}</strong>. Please review the reason below.`
+            : `Ticket <strong>${ticketId}</strong> has been rejected by <strong>${rejectorName}</strong>. This is an informational notification for your awareness.`;
+
+        const nextStepsParagraph = isRequester
+            ? `Related by this`
+            : ``;
+
+        // Build Ticket Information block (used for both requesters and non-requesters)
+        // Use the same two-column grid layout as the approval email so fields are aligned consistently
+        const ticketInfoHtml = `
+            <div style="background:#fef2f2; border:1px solid #fecaca; padding:20px 25px; border-radius:10px; margin:25px 0;">
+                <h3 style="color:#dc2626; margin:0 0 15px 0; font-size:18px;">Ticket Information</h3>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; color:#374151;">
+                    <div><strong>Ticket ID:</strong> ${ticketId}</div>
+                    <div><strong>Category:</strong> ${category || 'N/A'}</div>
+                    <div><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${ticketData.severityLevel || 'N/A'}</span></div>
+                    <div><strong>Request Type:</strong> ${ticketData.requestType || 'N/A'}</div>
+                    <div><strong>Assigned Team:</strong> ${ticketData.assignedTeam || 'N/A'}</div>
+                    <div><strong>Assigned To:</strong> ${ticketData.assignedTo || 'Unassigned'}</div>
+                    ${ticketData.assignedToEmail ? `<div><strong>Assignee Email:</strong> ${ticketData.assignedToEmail}</div>` : ''}
+                    ${ticketData.status ? `<div><strong>Status:</strong> <span style="background:#fee2e2; color:#b91c1c; padding:2px 8px; border-radius:4px; font-size:12px;">${ticketData.status}</span></div>` : ''}
+                </div>
+            </div>
+        `;
 
         const rejectionTemplate = `
             <div style="font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif; background-color:#f0f2f5; padding:30px; line-height:1.6; color:#333;">
@@ -1150,27 +1264,14 @@ class EmailServiceApp {
                     </div>
                     <div style="padding:30px;">
                         <h2 style="color:#1a202c; margin:0 0 10px 0; font-size:26px; font-weight:700;">❌ Ticket Rejected</h2>
-                        <p style="color:#4a5568; margin:0 0 20px 0; font-size:16px;">We regret to inform you that your support ticket has been rejected by <strong>${rejectorName}</strong>. Please review the details below.</p>
-
-                        <div style="background:#fef2f2; border:1px solid #fecaca; padding:20px 25px; border-radius:10px; margin:25px 0;">
-                            <h3 style="color:#dc2626; margin:0 0 15px 0; font-size:18px; display:flex; align-items:center; gap:8px;">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" stroke="#dc2626" stroke-width="1.5"/>
-                                </svg>
-                                Ticket Details
-                            </h3>
-                            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; color:#dc2626;">
-                                <div><strong>Ticket ID:</strong> ${ticketId}</div>
-                                <div><strong>Category:</strong> ${category}</div>
-                                <div><strong>Rejected By:</strong> ${rejectorName}</div>
-                                <div><strong>Rejection Date:</strong> ${new Date().toLocaleDateString()}</div>
-                            </div>
-                        </div>
+                        <p style="color:#4a5568; margin:0 0 20px 0; font-size:16px;">${introParagraph}</p>
 
                         ${rejectionReason ? `<div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
                             <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px;">Rejection Reason:</h4>
                             <p style="color:#92400e; margin:0; font-size:14px; white-space:pre-wrap;">${rejectionReason}</p>
                         </div>` : ''}
+
+                        ${ticketInfoHtml}
 
                         <div style="background:#fef9c3; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
                             <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px;">Requester Information</h4>
@@ -1186,14 +1287,7 @@ class EmailServiceApp {
                             <p style="color:#4a5568; margin:0; font-size:14px; white-space:pre-wrap;">${description}</p>
                         </div>` : ''}
 
-                        <div style="background:#e0f2fe; border:1px solid #81d4fa; padding:20px 25px; border-radius:10px; margin:25px 0;">
-                            <h4 style="color:#0277bd; margin:0 0 10px 0; font-size:16px;">What's Next?</h4>
-                            <p style="color:#0277bd; margin:0; font-size:14px;">You can review the rejection reason above and submit a new ticket with the necessary corrections, or contact the IT Support Team directly for clarification.</p>
-                        </div>
-
-                        <p style="text-align:center; margin:30px 0;">
-                            <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/new" style="background-color:#dc2626;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">Submit New Ticket</a>
-                        </p>
+                        ${!isRequester ? `<p style="text-align:center; margin:30px 0;"><a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/new" style="background-color:#dc2626;color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">Submit New Ticket</a></p>` : ''}
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
                             If you have any questions about this rejection, please contact the IT Support Team directly.

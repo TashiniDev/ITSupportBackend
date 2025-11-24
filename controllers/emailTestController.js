@@ -66,20 +66,47 @@ exports.testStatusUpdateEmail = async (req, res) => {
             { email: process.env.SENDER_EMAIL, name: 'Test Team Member' }
         ];
 
-        await emailServiceApp.sendTicketStatusUpdateEmail(
-            mockTicketData,
-            mockTeamMembers,
-            process.env.SENDER_EMAIL, // IT Head
-            process.env.SENDER_EMAIL, // Ticket creator
-            'NEW',
-            'PROCESSING',
-            'Test System'
-        );
-        
-        res.status(200).json({
-            success: true,
-            message: 'Test status update emails sent successfully'
-        });
+        const mockRoleOneUsers = [
+            { email: process.env.SENDER_EMAIL, name: 'RoleOne Tester' }
+        ];
+
+        try {
+            const result = await emailServiceApp.sendTicketStatusUpdateEmail(
+                mockTicketData,
+                mockTeamMembers,
+                process.env.SENDER_EMAIL, // IT Head
+                process.env.SENDER_EMAIL, // Ticket creator
+                'NEW',
+                'PROCESSING',
+                'Test System',
+                mockRoleOneUsers
+            );
+
+            res.status(200).json({
+                success: true,
+                message: 'Test status update emails attempted',
+                recipients: {
+                    team: mockTeamMembers,
+                    itHead: process.env.SENDER_EMAIL,
+                    creator: process.env.SENDER_EMAIL,
+                    roleOneUsers: mockRoleOneUsers
+                },
+                sendResult: result
+            });
+        } catch (err) {
+            console.error('❌ Status update email test failed (diagnostic):', err);
+            res.status(500).json({
+                success: false,
+                message: 'Status update email test failed',
+                recipients: {
+                    team: mockTeamMembers,
+                    itHead: process.env.SENDER_EMAIL,
+                    creator: process.env.SENDER_EMAIL,
+                    roleOneUsers: mockRoleOneUsers
+                },
+                error: err && err.message ? err.message : String(err)
+            });
+        }
         
     } catch (error) {
         console.error('❌ Status update email test failed:', error);

@@ -238,10 +238,14 @@ class EmailService {
                         <p>Your IT support ticket has been created successfully.</p>
                         
                         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #495057;">Ticket Details:</h3>
+                            <h3 style="margin-top: 0; color: #495057;">Ticket Information</h3>
                             <p><strong>Ticket ID:</strong> #${data.ticketId || 'N/A'}</p>
-                            <p><strong>Title:</strong> ${data.title || 'N/A'}</p>
-                            <p><strong>Severity Level:</strong> ${data.severityLevel || 'N/A'}</p>
+                            <p><strong>Category:</strong> ${data.category || data.title || 'N/A'}</p>
+                            <p><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${data.severityLevel || 'N/A'}</span></p>
+                            <p><strong>Request Type:</strong> ${data.requestType || 'N/A'}</p>
+                            <p><strong>Assigned Team:</strong> ${data.assignedTeam || 'N/A'}</p>
+                            <p><strong>Assigned To:</strong> ${data.assignedTo || 'Unassigned'}</p>
+                            ${data.assignedToEmail ? `<p><strong>Assignee Email:</strong> ${data.assignedToEmail}</p>` : ''}
                             <p><strong>Status:</strong> ${data.status || 'Open'}</p>
                             <p><strong>Created:</strong> ${data.createdAt || new Date().toLocaleString()}</p>
                         </div>
@@ -262,10 +266,15 @@ class EmailService {
                         <p>Your IT support ticket has been updated.</p>
                         
                         <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                            <h3 style="margin-top: 0; color: #495057;">Updated Details:</h3>
+                            <h3 style="margin-top: 0; color: #495057;">Ticket Information</h3>
                             <p><strong>Ticket ID:</strong> #${data.ticketId || 'N/A'}</p>
-                            <p><strong>New Status:</strong> ${data.status || 'N/A'}</p>
-                            <p><strong>Updated By:</strong> ${data.updatedBy || 'System'}</p>
+                            <p><strong>Category:</strong> ${data.category || data.title || 'N/A'}</p>
+                            <p><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${data.severityLevel || 'N/A'}</span></p>
+                            <p><strong>Request Type:</strong> ${data.requestType || 'N/A'}</p>
+                            <p><strong>Assigned Team:</strong> ${data.assignedTeam || 'N/A'}</p>
+                            <p><strong>Assigned To:</strong> ${data.assignedTo || 'Unassigned'}</p>
+                            ${data.assignedToEmail ? `<p><strong>Assignee Email:</strong> ${data.assignedToEmail}</p>` : ''}
+                            <p><strong>Status:</strong> ${data.status || 'N/A'}</p>
                             <p><strong>Update Time:</strong> ${data.updatedAt || new Date().toLocaleString()}</p>
                         </div>
                         
