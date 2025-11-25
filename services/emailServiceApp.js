@@ -808,6 +808,9 @@ class EmailServiceApp {
         `;
 
         // Email template for ticket creator (more user-friendly)
+        // Conditionally show "View Your Ticket" button - hide for COMPLETED and PROCESSING status
+        const shouldShowButton = !(newStatus === 'COMPLETED' || newStatus === 'PROCESSING');
+        
         const creatorTemplate = `
             <div style="font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif; background-color:#f0f2f5; padding:30px; line-height:1.6; color:#333;">
                 <div style="max-width:640px; margin:0 auto; background:#ffffff; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.08); overflow:hidden; border:1px solid #e2e8f0;">
@@ -835,15 +838,6 @@ class EmailServiceApp {
                         </div>
 
                         ${newStatus === 'PROCESSING' ? `
-                        <div style="background:#fef3c7; border:1px solid #fde047; padding:20px 25px; border-radius:10px; margin:25px 0;">
-                                <h4 style="color:#92400e; margin:0 0 10px 0; font-size:16px;">Requester Information</h4>
-                                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; color:#92400e; font-size:14px; margin-top:10px;">
-                                    <div><strong>Name:</strong> ${requesterName}</div>
-                                    <div><strong>Contact:</strong> ${requesterContact}</div>
-                                    <div><strong>Email:</strong> ${requesterEmail}</div>
-                                </div>
-                            </div>
-
                             ${description ? `<div style="background:#f8fafc; border:1px solid #e2e8f0; padding:20px 25px; border-radius:10px; margin:25px 0;">
                                 <h4 style="color:#2d3748; margin:0 0 10px 0; font-size:16px;">Description:</h4>
                                 <p style="color:#4a5568; margin:0; font-size:14px; white-space:pre-wrap;">${description}</p>
@@ -871,9 +865,9 @@ class EmailServiceApp {
                             </div>
                         </div>
 
-                        <p style="text-align:center; margin:30px 0;">
+                        ${shouldShowButton ? `<p style="text-align:center; margin:30px 0;">
                             <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/tickets/${ticketId}" style="background-color:${statusColor};color:#ffffff;padding:12px 24px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;font-size:16px;">View Your Ticket</a>
-                        </p>
+                        </p>` : ''}
 
                         <p style="color:#64748b; margin-top:25px; font-size:14px; border-top:1px solid #edf2f7; padding-top:20px;">
                             Thank you for using our IT Support system. If you have any questions about this update, please reply to this email or contact our support team.
