@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
 
-const { normalizeSeverityInput, formatSeverityForFrontend } = require('../lib/severity');
+const { normalizeSeverityInput, formatSeverityForFrontend, formatStatusForFrontend } = require('../lib/severity');
 
 /**
  * Create a new ticket with optional file attachments
@@ -247,7 +247,7 @@ exports.createTicket = async (req, res) => {
                     title: ticket.fullName || fullName || '',
                     description: ticket.Description || description || 'No description provided',
                     severityLevel: formatSeverityForFrontend(dbSeverity),
-                    status: ticket.Status || initialStatus
+                    status: isChangeManagementRequest ? 'PENDING APPROVAL' : 'NEW'
                 };
 
                 // Attach approval token so email templates can build tokenized links
@@ -299,7 +299,7 @@ exports.createTicket = async (req, res) => {
                                                         ${ticket.assignedToEmail ? `<div style="margin-bottom:10px;"><strong>Assignee Email:</strong> ${ticket.assignedToEmail}</div>` : ''}
                                                         ${hasRequestType ? `<div style="margin-bottom:10px;"><strong>Request Type:</strong> ${ticket.requestTypeName}</div>` : (hasIssueType ? `<div style="margin-bottom:10px;"><strong>Issue Type:</strong> ${ticket.issueTypeName}</div>` : '')}
                                                         <div style="margin-bottom:10px;"><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${formatSeverityForFrontend(dbSeverity)}</span></div>
-                                                        <div style="margin-bottom:10px;"><strong>Status:</strong> NEW</div>
+                                                        <div style="margin-bottom:10px;"><strong>Status:</strong> <span style="background:${isChangeManagementRequest ? '#fef3c7' : '#e0e7ff'}; color:${isChangeManagementRequest ? '#92400e' : '#3730a3'}; padding:2px 8px; border-radius:4px; font-size:12px;">${isChangeManagementRequest ? 'PENDING APPROVAL' : 'NEW'}</span></div>
                                                     </div>
                                                 </div>
                                                 
@@ -1877,8 +1877,6 @@ exports.approveTicket = async (req, res) => {
                         t.CategoryId,
                         t.SeverityLevel as severityLevel,
                         t.Status as status,
-                        t.SeverityLevel as severityLevel,
-                        t.Status as status,
                     c.Name as categoryName,
                     t.AssignerId,
                     au.email as assignerEmail,
@@ -1918,7 +1916,7 @@ exports.approveTicket = async (req, res) => {
                 assignedTo: info.assignerName || 'Unassigned',
                 assignedToEmail: info.assignerEmail || null,
                 severityLevel: formatSeverityForFrontend(info.severityLevel),
-                status: info.status || 'N/A',
+                status: 'APPROVED',
                 createdDate: info.CreatedDate,
                 description: info.Description || '',
                 approverName: finalApproverName,
@@ -2124,6 +2122,8 @@ exports.rejectTicket = async (req, res) => {
                     t.Email,
                     t.Description,
                     t.CreatedDate,
+                    t.Status,
+                    t.SeverityLevel as severityLevel,
                     t.CategoryId,
                     c.Name as categoryName,
                     t.AssignerId,
@@ -2164,7 +2164,7 @@ exports.rejectTicket = async (req, res) => {
                 assignedTo: info.assignerName || 'Unassigned',
                 assignedToEmail: info.assignerEmail || null,
                 severityLevel: formatSeverityForFrontend(info.severityLevel),
-                status: info.status || 'N/A',
+                status: 'REJECTED',
                 createdDate: info.CreatedDate,
                 description: info.Description || '',
                 rejectorName: finalRejectorName,

@@ -406,6 +406,7 @@ class EmailServiceApp {
                                 <div><strong>Ticket ID:</strong> ${ticketId}</div>
                                 <div><strong>Category:</strong> ${category}</div>
                                 <div><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${severityLevel}</span></div>
+                                <div><strong>Status:</strong> <span style="background:${ticketData.status === 'PENDING APPROVAL' ? '#fef3c7' : '#e0e7ff'}; color:${ticketData.status === 'PENDING APPROVAL' ? '#92400e' : '#3730a3'}; padding:2px 8px; border-radius:4px; font-size:12px;">${ticketData.status}</span></div>
                                 ${hasRequestType ? `                                <div><strong>Request Type:</strong> ${ticketData.requestType}</div>` : (hasIssueType ? `                                <div><strong>Issue Type:</strong> ${issueType}</div>` : '')}
                                 <div><strong>Assigned Team:</strong> ${assignedTeam}</div>
                                 <div><strong>Assigned To:</strong> ${assignedTo}</div>
@@ -507,6 +508,7 @@ class EmailServiceApp {
                                 <div><strong>Ticket ID:</strong> ${ticketId}</div>
                                 <div><strong>Category:</strong> ${category}</div>
                                 <div><strong>Severity Level:</strong> <span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:4px; font-size:12px;">${severityLevel}</span></div>
+                                <div><strong>Status:</strong> <span style="background:${ticketData.status === 'PENDING APPROVAL' ? '#fef3c7' : '#e0e7ff'}; color:${ticketData.status === 'PENDING APPROVAL' ? '#92400e' : '#3730a3'}; padding:2px 8px; border-radius:4px; font-size:12px;">${ticketData.status}</span></div>
                                 ${hasRequestType ? `                                <div><strong>Request Type:</strong> ${ticketData.requestType}</div>` : (hasIssueType ? `                                <div><strong>Issue Type:</strong> ${issueType}</div>` : '')}
                                 <div><strong>Assigned Team:</strong> ${assignedTeam}</div>
                                 <div><strong>Assigned To:</strong> ${assignedTo}</div>
