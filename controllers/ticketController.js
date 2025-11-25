@@ -2247,7 +2247,7 @@ exports.updateTicketToProcessing = async (req, res) => {
                 message: 'Valid ticket ID is required'
             });
         }
-        
+
         const pool = getPool();
         
         // First, verify that the ticket exists and is active
@@ -2341,6 +2341,7 @@ exports.updateTicketToProcessing = async (req, res) => {
                     t.Email,
                     t.Description,
                     t.SeverityLevel,
+                    t.CategoryId,
                     d.Name as departmentName,
                     comp.Name as companyName,
                     c.Name as categoryName,
@@ -2367,9 +2368,7 @@ exports.updateTicketToProcessing = async (req, res) => {
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.categoryId = ?
-            `, [ticket.categoryName ? await getCategoryId(pool, ticket.categoryName) : null]);
-            
-            // Get IT Head
+            `, [ticket.CategoryId]);            // Get IT Head
             const [itHeadUsers] = await pool.query(`
                 SELECT DISTINCT u.email, u.name 
                 FROM user u 
@@ -2580,6 +2579,7 @@ exports.updateTicketToCompleted = async (req, res) => {
                     t.Email,
                     t.Description,
                     t.SeverityLevel,
+                    t.CategoryId,
                     d.Name as departmentName,
                     comp.Name as companyName,
                     c.Name as categoryName,
@@ -2606,7 +2606,7 @@ exports.updateTicketToCompleted = async (req, res) => {
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.categoryId = ?
-            `, [ticket.categoryName ? await getCategoryId(pool, ticket.categoryName) : null]);
+            `, [ticket.CategoryId]);
             
             // Get IT Head
             const [itHeadUsers] = await pool.query(`
@@ -2615,6 +2615,14 @@ exports.updateTicketToCompleted = async (req, res) => {
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.roleId = 3
                 LIMIT 1
+            `);
+
+            // Get users with role ID 1 (to be notified on status updates as well)
+            const [roleOneUsersStatusC] = await pool.query(`
+                SELECT DISTINCT u.email, u.name 
+                FROM user u 
+                WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
+                AND u.roleId = 1
             `);
             
             // Get ticket creator email
