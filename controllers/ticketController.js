@@ -37,6 +37,31 @@ exports.createTicket = async (req, res) => {
         const approvalToken = crypto.randomBytes(24).toString('hex');
         const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
 
+        // Check if this is a Change Management request - need to query the requesttype table
+        let isChangeManagementRequest = false;
+        if (requestType) {
+            try {
+                const [requestTypeRows] = await connection.query(
+                    'SELECT Name FROM requesttype WHERE Id = ? AND IsActive = 1',
+                    [parseInt(requestType)]
+                );
+                if (requestTypeRows.length > 0) {
+                    const requestTypeName = requestTypeRows[0].Name;
+                    // Check for both "Change management" and "Change management requests"
+                    const normalizedName = String(requestTypeName).trim().toLowerCase();
+                    isChangeManagementRequest = normalizedName === 'change management requests' || 
+                                               normalizedName === 'change management';
+                    console.log(`📋 Ticket Request Type: "${requestTypeName}" | Normalized: "${normalizedName}" | Is Change Management: ${isChangeManagementRequest}`);
+                }
+            } catch (requestTypeError) {
+                console.error('Error checking request type:', requestTypeError);
+            }
+        }
+
+        // Set initial status based on request type
+        const initialStatus = isChangeManagementRequest ? 'PENDING APPROVAL' : 'NEW';
+        console.log(`📋 Setting initial ticket status: ${initialStatus}`);
+
     // Normalize severity for DB and insert ticket into database (store approval token & expiry so IT Head can approve/reject via email link)
     const dbSeverity = normalizeSeverityInput(severityLevel);
 
@@ -45,7 +70,7 @@ exports.createTicket = async (req, res) => {
                 Name, ContactNumber, Email, AssignerId, IssueId, RequestTypeId, 
                 CompanyId, DepartmentId, Description, CategoryId, Status, ApprovalStatus, ApprovalToken, TokenExpiry,
                     SeverityLevel, CreatedBy, CreatedDate, IsActive
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW', 'Pending', ?, ?, ?, ?, NOW(), 1)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?, ?, ?, ?, NOW(), 1)`,
             [
                 fullName,
                 contactNumber || null,
@@ -57,6 +82,7 @@ exports.createTicket = async (req, res) => {
                 department ? parseInt(department) : null,
                 description,
                 category ? parseInt(category) : null,
+                initialStatus,
                 approvalToken,
                     tokenExpiry,
                     // SeverityLevel: prefer `severityLevel` (frontend may send this).
@@ -182,6 +208,7 @@ exports.createTicket = async (req, res) => {
                         t.ContactNumber,
                         t.Email,
                         t.Description,
+                        t.Status,
                         d.Name as departmentName,
                         comp.Name as companyName,
                         c.Name as categoryName,
@@ -219,7 +246,8 @@ exports.createTicket = async (req, res) => {
                     lastUpdated: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString(),
                     title: ticket.fullName || fullName || '',
                     description: ticket.Description || description || 'No description provided',
-                    severityLevel: formatSeverityForFrontend(dbSeverity)
+                    severityLevel: formatSeverityForFrontend(dbSeverity),
+                    status: ticket.Status || initialStatus
                 };
 
                 // Attach approval token so email templates can build tokenized links
@@ -605,7 +633,7 @@ exports.getAllTickets = async (req, res) => {
                 COUNT(*) as total,
                 SUM(CASE WHEN t.Status = 'NEW' THEN 1 ELSE 0 END) as new,
                 SUM(CASE WHEN t.Status = 'PROCESSING' THEN 1 ELSE 0 END) as processing,
-                SUM(CASE WHEN t.Status IN ('RESOLVED', 'COMPLETED') THEN 1 ELSE 0 END) as completed
+                SUM(CASE WHEN t.Status = 'COMPLETED' THEN 1 ELSE 0 END) as completed
             FROM ticket t
             WHERE ${whereClause}
         `;
@@ -831,7 +859,7 @@ exports.getMyTickets = async (req, res) => {
                 COUNT(*) as total,
                 SUM(CASE WHEN t.Status = 'NEW' THEN 1 ELSE 0 END) as new,
                 SUM(CASE WHEN t.Status = 'PROCESSING' THEN 1 ELSE 0 END) as processing,
-                SUM(CASE WHEN t.Status IN ('RESOLVED', 'COMPLETED') THEN 1 ELSE 0 END) as completed
+                SUM(CASE WHEN t.Status = 'COMPLETED' THEN 1 ELSE 0 END) as completed
             FROM ticket t
             WHERE t.IsActive = 1 AND t.CategoryId = ? AND 
                   (t.AssignerId = (SELECT Id FROM user WHERE uid = ? AND IsActive = 1) OR t.CreatedBy = ?)
@@ -934,7 +962,7 @@ exports.getMyTickets = async (req, res) => {
 /**
  * Update ticket status
  * PUT /api/tickets/:ticketId/status
- * Request body: { statusId: "NEW" | "PROCESSING" | "RESOLVED" | "COMPLETED" | "CLOSED" }
+ * Request body: { statusId: "NEW" | "OPEN" | "PROCESSING" | "COMPLETED" | "ON_HOLD" | "PENDING APPROVAL" | "APPROVED" | "REJECTED" | "CLOSED" }
  */
 exports.updateTicketStatus = async (req, res) => {
     try {
@@ -957,7 +985,7 @@ exports.updateTicketStatus = async (req, res) => {
         }
         
         // Validate status values
-        const allowedStatuses = ['NEW', 'PROCESSING', 'COMPLETED'];
+        const allowedStatuses = ['NEW', 'OPEN', 'PROCESSING', 'COMPLETED', 'ON_HOLD', 'PENDING APPROVAL', 'APPROVED', 'REJECTED', 'CLOSED'];
         if (!allowedStatuses.includes(statusId.toUpperCase())) {
             return res.status(400).json({
                 success: false,
@@ -1824,10 +1852,10 @@ exports.approveTicket = async (req, res) => {
             }
         }
 
-        // Update ticket approval fields to reflect approval
+        // Update ticket approval fields to reflect approval and set Status to APPROVED
         await pool.query(`
             UPDATE ticket
-            SET ApprovalStatus = 'Approved', ActionedBy = ?, ActionedDate = NOW(), ActionComments = ?, ApprovalToken = NULL, TokenExpiry = NULL, UpdatedBy = ?, UpdatedDate = NOW()
+            SET Status = 'APPROVED', ApprovalStatus = 'Approved', ActionedBy = ?, ActionedDate = NOW(), ActionComments = ?, ApprovalToken = NULL, TokenExpiry = NULL, UpdatedBy = ?, UpdatedDate = NOW()
             WHERE Id = ?
         `, [finalApprovedById, comments || null, finalApproverName, id]);
 
@@ -2074,10 +2102,10 @@ exports.rejectTicket = async (req, res) => {
             }
         }
 
-        // Update ticket approval fields to reflect rejection
+        // Update ticket approval fields to reflect rejection and set Status to REJECTED
         await pool.query(`
             UPDATE ticket
-            SET ApprovalStatus = 'Rejected', ActionedBy = ?, ActionedDate = NOW(), ActionComments = ?, ApprovalToken = NULL, TokenExpiry = NULL, UpdatedBy = ?, UpdatedDate = NOW()
+            SET Status = 'REJECTED', ApprovalStatus = 'Rejected', ActionedBy = ?, ActionedDate = NOW(), ActionComments = ?, ApprovalToken = NULL, TokenExpiry = NULL, UpdatedBy = ?, UpdatedDate = NOW()
             WHERE Id = ?
         `, [finalRejectedById, reason || null, finalRejectorName, id]);
 

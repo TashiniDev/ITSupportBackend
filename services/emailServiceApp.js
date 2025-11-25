@@ -365,11 +365,16 @@ class EmailServiceApp {
     const hasRequestType = ticketData.requestType && String(ticketData.requestType).trim().toLowerCase() !== 'n/a';
     const hasIssueType = issueType && String(issueType).trim().toLowerCase() !== 'n/a';
     
-    // Check if this ticket requires approval (only for Change management requests)
-    const requiresApproval = ticketData.requestType && 
-                           String(ticketData.requestType).trim().toLowerCase() === 'change management requests';
+    // Check if this ticket requires approval - ONLY for Change Management tickets with PENDING APPROVAL status
+    const normalizedRequestType = ticketData.requestType ? String(ticketData.requestType).trim().toLowerCase() : '';
+    const isChangeManagementType = normalizedRequestType === 'change management requests' || 
+                                   normalizedRequestType === 'change management';
+    const isPendingApprovalStatus = ticketData.status && String(ticketData.status).trim().toUpperCase() === 'PENDING APPROVAL';
     
-    console.log(`📋 Ticket Request Type: "${ticketData.requestType}" | Requires Approval: ${requiresApproval}`);
+    // Approval buttons ONLY appear for Change Management tickets that have PENDING APPROVAL status
+    const requiresApproval = isChangeManagementType && isPendingApprovalStatus;
+    
+    console.log(`📋 Ticket Request Type: "${ticketData.requestType}" | Status: "${ticketData.status}" | Is Change Mgmt: ${isChangeManagementType} | Is Pending: ${isPendingApprovalStatus} | Requires Approval: ${requiresApproval}`);
 
         // Email template for assigned team member
         const assigneeTemplate = `
