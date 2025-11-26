@@ -60,6 +60,7 @@ router.get('/:id/approve', async (req, res) => {
     try {
         const { id } = req.params;
         const token = req.query && req.query.token ? String(req.query.token) : null;
+        const itHeadId = req.query && req.query.itHeadId ? String(req.query.itHeadId) : null;
 
         const pool = getPool();
         const [rows] = await pool.query('SELECT ApprovalStatus, ApprovalToken, TokenExpiry, ActionedBy FROM ticket WHERE Id = ? AND IsActive = 1', [id]);
@@ -85,7 +86,8 @@ router.get('/:id/approve', async (req, res) => {
         const expiry = ticket.TokenExpiry ? new Date(ticket.TokenExpiry) : null;
         if (!expiry || expiry < new Date()) return res.status(403).send(`<html><body><h3>Approval token expired</h3></body></html>`);
 
-        const actionUrl = `/api/tickets/${id}/approve?token=${encodeURIComponent(token)}`;
+        // Build action URL preserving both token and itHeadId
+        const actionUrl = `/api/tickets/${id}/approve?token=${encodeURIComponent(token)}${itHeadId ? `&itHeadId=${encodeURIComponent(itHeadId)}` : ''}`;
         const page = `<!doctype html><html><head><meta charset="utf-8"><title>Approve Ticket</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;background:#f8fafc;">
             <div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;">
                 <h2>Approve Ticket</h2>
@@ -108,6 +110,7 @@ router.get('/:id/reject', async (req, res) => {
     try {
         const { id } = req.params;
         const token = req.query && req.query.token ? String(req.query.token) : null;
+        const itHeadId = req.query && req.query.itHeadId ? String(req.query.itHeadId) : null;
         const pool = getPool();
         const [rows] = await pool.query('SELECT ApprovalStatus, ApprovalToken, TokenExpiry, ActionedBy FROM ticket WHERE Id = ? AND IsActive = 1', [id]);
         if (rows.length === 0) return res.status(404).send(`<html><body><h3>Ticket not found</h3></body></html>`);
@@ -131,7 +134,8 @@ router.get('/:id/reject', async (req, res) => {
         const expiry = ticket.TokenExpiry ? new Date(ticket.TokenExpiry) : null;
         if (!expiry || expiry < new Date()) return res.status(403).send(`<html><body><h3>Rejection token expired</h3></body></html>`);
 
-        const actionUrl = `/api/tickets/${id}/reject?token=${encodeURIComponent(token)}`;
+        // Build action URL preserving both token and itHeadId
+        const actionUrl = `/api/tickets/${id}/reject?token=${encodeURIComponent(token)}${itHeadId ? `&itHeadId=${encodeURIComponent(itHeadId)}` : ''}`;
         const page = `<!doctype html><html><head><meta charset="utf-8"><title>Reject Ticket</title></head><body style="font-family:Arial,Helvetica,sans-serif;max-width:700px;margin:40px auto;background:#fff5f5;">
             <div style="background:#fff;border-radius:8px;padding:24px;border:1px solid #e6edf3;">
                 <h2>Reject Ticket</h2>

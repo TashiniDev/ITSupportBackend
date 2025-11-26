@@ -154,7 +154,7 @@ exports.createTicket = async (req, res) => {
             
             // Get ALL IT Heads (users with role ID 3) - Ensure all receive notification emails
             let itHeadQuery = `
-                SELECT DISTINCT u.email, u.name 
+                SELECT DISTINCT u.Id, u.email, u.name 
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.roleId = 3
@@ -1133,7 +1133,7 @@ exports.updateTicketStatus = async (req, res) => {
                     
                     // Get IT Head
                     const [itHeadUsers] = await pool.query(`
-                        SELECT DISTINCT u.email, u.name 
+                        SELECT DISTINCT u.Id, u.email, u.name 
                         FROM user u 
                         WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                         AND u.roleId = 3
@@ -1590,7 +1590,7 @@ exports.addComment = async (req, res) => {
 
                     // Get IT Head
                     const [itHeadUsers] = await pool.query(`
-                        SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3
+                        SELECT DISTINCT u.Id, u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3
                     `);
                     const itHeadUsers_filtered = itHeadUsers.filter(user => user.email);
 
@@ -1862,14 +1862,39 @@ exports.approveTicket = async (req, res) => {
             finalApprovedById = req.user?.id || null;
             finalApproverName = req.user?.name || req.user?.email || 'IT Head';
         } else if (tokenValidated) {
-            // Token-approved via email link — show generic IT Head name since we can't determine which specific IT Head clicked
-            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
-            if (itHeadRows && itHeadRows.length > 0) {
-                finalApprovedById = itHeadRows[0].Id; // Use first IT Head for DB reference
-                finalApproverName = 'IT Head'; // Show only "IT Head" when approved via email token
+            // Token-approved via email link — check if itHeadId parameter was provided in the URL
+            const itHeadId = req.query?.itHeadId ? parseInt(req.query.itHeadId) : null;
+            
+            console.log(`🔍 Token approval - itHeadId from URL: ${itHeadId}`);
+            console.log(`🔍 Full query params:`, req.query);
+            
+            if (itHeadId) {
+                // Query the IT Head's details using the provided ID
+                console.log(`📊 Querying IT Head with ID: ${itHeadId}`);
+                const [itHeadRows] = await pool.query(`SELECT Id, Name, email FROM user WHERE Id = ? AND roleId = 3 AND IsActive = 1`, [itHeadId]);
+                console.log(`📊 Query result:`, itHeadRows);
+                
+                if (itHeadRows && itHeadRows.length > 0) {
+                    finalApprovedById = itHeadRows[0].Id;
+                    finalApproverName = itHeadRows[0].Name || itHeadRows[0].email || 'IT Head';
+                    console.log(`✅ Approval by IT Head ID ${itHeadId}: ${finalApproverName} (ID: ${finalApprovedById})`);
+                } else {
+                    // IT Head ID not found or invalid - fall back to first IT Head
+                    console.log(`⚠️ IT Head ID ${itHeadId} not found or invalid, using fallback`);
+                    const [fallbackRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
+                    if (fallbackRows && fallbackRows.length > 0) {
+                        finalApprovedById = fallbackRows[0].Id;
+                        finalApproverName = fallbackRows[0].Name || 'IT Head';
+                    }
+                }
             } else {
-                finalApprovedById = null;
-                finalApproverName = 'IT Head';
+                // No itHeadId provided - fall back to first IT Head (backward compatibility)
+                console.log(`⚠️ No IT Head ID provided in approval URL, using fallback`);
+                const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
+                if (itHeadRows && itHeadRows.length > 0) {
+                    finalApprovedById = itHeadRows[0].Id;
+                    finalApproverName = itHeadRows[0].Name || 'IT Head';
+                }
             }
         }
 
@@ -2120,14 +2145,33 @@ exports.rejectTicket = async (req, res) => {
             finalRejectedById = req.user?.id || null;
             finalRejectorName = req.user?.name || req.user?.email || 'IT Head';
         } else if (tokenValidated) {
-            // Token-rejected via email link — show generic IT Head name since we can't determine which specific IT Head clicked
-            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
-            if (itHeadRows && itHeadRows.length > 0) {
-                finalRejectedById = itHeadRows[0].Id; // Use first IT Head for DB reference
-                finalRejectorName = 'IT Head'; // Show only "IT Head" when rejected via email token
+            // Token-rejected via email link — check if itHeadId parameter was provided in the URL
+            const itHeadId = req.query?.itHeadId ? parseInt(req.query.itHeadId) : null;
+            
+            if (itHeadId) {
+                // Query the IT Head's details using the provided ID
+                const [itHeadRows] = await pool.query(`SELECT Id, Name, email FROM user WHERE Id = ? AND roleId = 3 AND IsActive = 1`, [itHeadId]);
+                if (itHeadRows && itHeadRows.length > 0) {
+                    finalRejectedById = itHeadRows[0].Id;
+                    finalRejectorName = itHeadRows[0].Name || itHeadRows[0].email || 'IT Head';
+                    console.log(`✅ Rejection by IT Head ID ${itHeadId}: ${finalRejectorName}`);
+                } else {
+                    // IT Head ID not found or invalid - fall back to first IT Head
+                    console.log(`⚠️ IT Head ID ${itHeadId} not found or invalid, using fallback`);
+                    const [fallbackRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
+                    if (fallbackRows && fallbackRows.length > 0) {
+                        finalRejectedById = fallbackRows[0].Id;
+                        finalRejectorName = fallbackRows[0].Name || 'IT Head';
+                    }
+                }
             } else {
-                finalRejectedById = null;
-                finalRejectorName = 'IT Head';
+                // No itHeadId provided - fall back to first IT Head (backward compatibility)
+                console.log(`⚠️ No IT Head ID provided in rejection URL, using fallback`);
+                const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
+                if (itHeadRows && itHeadRows.length > 0) {
+                    finalRejectedById = itHeadRows[0].Id;
+                    finalRejectorName = itHeadRows[0].Name || 'IT Head';
+                }
             }
         }
 

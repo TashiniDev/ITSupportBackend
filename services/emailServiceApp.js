@@ -6,12 +6,35 @@
 const { Client } = require('@microsoft/microsoft-graph-client');
 const { ConfidentialClientApplication } = require('@azure/msal-node');
 const emailConfigApp = require('../config/emailConfigApp');
+const fs = require('fs');
+const path = require('path');
 
 class EmailServiceApp {
     constructor() {
         // Initialize MSAL client for application-only authentication
         this.confidentialClientApp = new ConfidentialClientApplication(emailConfigApp.confidentialClientConfig());
         this.accessToken = null;
+        // Load PrintCare logo once at startup for inline embedding in all emails
+        this.inlineAttachments = [];
+        try {
+            const logoPath = path.join(__dirname, '..', 'docs', 'printcareLogo.png');
+            if (fs.existsSync(logoPath)) {
+                const logoBuf = fs.readFileSync(logoPath);
+                const logoBase64 = logoBuf.toString('base64');
+                this.inlineAttachments.push({
+                    name: 'printcareLogo.png',
+                    contentType: 'image/png',
+                    contentBytes: logoBase64,
+                    isInline: true,
+                    contentId: 'printcareLogo'
+                });
+                console.log('📎 [emailServiceApp] Inline logo loaded for emails');
+            } else {
+                console.log('⚠️ [emailServiceApp] PrintCare logo not found at', path.join('docs','printcareLogo.png'));
+            }
+        } catch (err) {
+            console.error('❌ [emailServiceApp] Failed to load inline logo:', err && err.message ? err.message : err);
+        }
     }
 
     /**
@@ -66,11 +89,33 @@ class EmailServiceApp {
             const client = this.createGraphClient(token);
 
             // Prepare email message
+            // If we have the inline logo loaded, prepend a small header logo HTML so every mail includes it
+            let bodyContent = emailData.body || '';
+            try {
+                if (this.inlineAttachments && this.inlineAttachments.length > 0) {
+                    const logoHtml = `<div style="max-width:640px;margin:0 auto 8px 0;text-align:left;padding:8px 0;"><img src=\"cid:printcareLogo\" alt=\"PrintCare\" style=\"height:40px;vertical-align:middle;\" /></div>`;
+                    // Only prepend if not already referencing the cid
+                    if (!String(bodyContent).includes('cid:printcareLogo')) {
+                        bodyContent = logoHtml + bodyContent;
+                    }
+                    // Ensure attachments include the inline logo unless explicitly skipped
+                    if (!emailData.skipInlineLogo) {
+                        emailData.attachments = (emailData.attachments || []).slice();
+                        const hasLogo = (emailData.attachments || []).some(a => a && (a.contentId === 'printcareLogo' || a.name === 'printcareLogo.png'));
+                        if (!hasLogo) {
+                            emailData.attachments = emailData.attachments.concat(this.inlineAttachments);
+                        }
+                    }
+                }
+            } catch (prepErr) {
+                console.error('❌ Error while preparing inline logo for email:', prepErr && prepErr.message ? prepErr.message : prepErr);
+            }
+
             const message = {
                 subject: emailData.subject,
                 body: {
                     contentType: emailData.contentType || 'HTML',
-                    content: emailData.body,
+                    content: bodyContent,
                 },
                 toRecipients: [
                     {
@@ -88,14 +133,20 @@ class EmailServiceApp {
                 }
             };
 
-            // Add attachments if provided
+            // Add attachments if provided (supports inline images via contentId and isInline)
             if (emailData.attachments && emailData.attachments.length > 0) {
-                message.attachments = emailData.attachments.map(attachment => ({
-                    '@odata.type': '#microsoft.graph.fileAttachment',
-                    name: attachment.name,
-                    contentType: attachment.contentType,
-                    contentBytes: attachment.contentBytes
-                }));
+                message.attachments = emailData.attachments.map(attachment => {
+                    const a = {
+                        '@odata.type': '#microsoft.graph.fileAttachment',
+                        name: attachment.name,
+                        contentType: attachment.contentType,
+                        contentBytes: attachment.contentBytes
+                    };
+                    // Optional inline/CID support
+                    if (attachment.contentId) a.contentId = attachment.contentId;
+                    if (typeof attachment.isInline !== 'undefined') a.isInline = !!attachment.isInline;
+                    return a;
+                });
                 console.log(`📎 Adding ${emailData.attachments.length} attachment(s) to email`);
             }
 
@@ -479,8 +530,8 @@ class EmailServiceApp {
             </div>
         `;
 
-        // Email template for IT Head
-        const itHeadTemplate = `
+        // Email template for IT Head - this is now a FUNCTION that takes itHeadId parameter
+        const generateItHeadTemplate = (itHeadId) => `
             <div style="font-family: 'Inter', 'Segoe UI', Roboto, Arial, sans-serif; background-color:#f0f2f5; padding:30px; line-height:1.6; color:#333;">
                 <div style="max-width:640px; margin:0 auto; background:#ffffff; border-radius:12px; box-shadow:0 6px 20px rgba(0,0,0,0.08); overflow:hidden; border:1px solid #e2e8f0;">
                     <div style="padding:25px 30px; background:linear-gradient(135deg, #1e40af 0%, #3b82f6 100%); color:#ffffff; display:flex; align-items:center; gap:15px; border-bottom:1px solid #1e3a8a;">
@@ -560,11 +611,11 @@ class EmailServiceApp {
                             </h4>
                             <p style="color:#856404; margin:0 0 20px 0; font-size:14px;">This is a <strong>Change Management Request</strong> that requires your approval. Please review the details and approve or reject this ticket.</p>
                             <div style="text-align:center;">
-                                          <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/api/tickets/${ticketId.split('-').pop()}/approve${ticketData.approvalToken ? `?token=${ticketData.approvalToken}` : ''}" 
+                                          <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/api/tickets/${ticketId.split('-').pop()}/approve${ticketData.approvalToken ? `?token=${ticketData.approvalToken}${itHeadId ? `&itHeadId=${itHeadId}` : ''}` : (itHeadId ? `?itHeadId=${itHeadId}` : '')}" 
                                    style="background-color:#059669;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;margin:0 10px;font-size:14px;">
                                    ✅ Approve Ticket
                                 </a>
-                                          <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/api/tickets/${ticketId.split('-').pop()}/reject${ticketData.approvalToken ? `?token=${ticketData.approvalToken}` : ''}" 
+                                          <a href="${process.env.APP_URL || 'http://10.1.1.57:3001'}/api/tickets/${ticketId.split('-').pop()}/reject${ticketData.approvalToken ? `?token=${ticketData.approvalToken}${itHeadId ? `&itHeadId=${itHeadId}` : ''}` : (itHeadId ? `?itHeadId=${itHeadId}` : '')}" 
                                    style="background-color:#dc2626;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block;font-weight:bold;margin:0 10px;font-size:14px;">
                                    ❌ Reject Ticket
                                 </a>
@@ -589,7 +640,7 @@ class EmailServiceApp {
             </div>
         `;
 
-        try {
+        try{
             // Send email to all team members in this category (INCLUDING the requester)
             if (categoryTeamMembers && categoryTeamMembers.length > 0) {
                 for (const teamMember of categoryTeamMembers) {
@@ -619,17 +670,20 @@ class EmailServiceApp {
                 console.log(`📧 Sending emails to ${itHeadUsers.length} IT Head(s)...`);
                 for (const itHead of itHeadUsers) {
                     if (itHead.email && itHead.email.includes('@')) {
+                        // Generate personalized template with this IT Head's ID
+                        const personalizedItHeadTemplate = generateItHeadTemplate(itHead.Id);
+                        
                         const itHeadEmailData = {
                             to: itHead.email,
                             toName: itHead.name || 'IT Head',
                             subject: `New Ticket Created - ${ticketId} (${category}) - Assigned to ${assignedTo}`,
-                            body: itHeadTemplate,
+                            body: personalizedItHeadTemplate,
                             contentType: 'HTML',
                             attachments: attachments
                         };
                         try {
                             await this.sendEmailAsUser(itHeadEmailData);
-                            console.log(`✅ Ticket notification email sent successfully to IT Head: ${itHead.name || 'IT Head'} (${itHead.email})`);
+                            console.log(`✅ Ticket notification email sent successfully to IT Head: ${itHead.name || 'IT Head'} (${itHead.email}) [ID: ${itHead.Id}]`);
                         } catch (emailError) {
                             console.error(`❌ Failed to send email to IT Head ${itHead.name || 'IT Head'} (${itHead.email}):`, emailError.message);
                         }
@@ -774,11 +828,13 @@ class EmailServiceApp {
         
         if (newStatus === 'PROCESSING') {
             statusColor = '#f59e0b';
-            statusIcon = '⚡';
+            // Use inline PrintCare logo for PROCESSING instead of emoji
+            statusIcon = '<img src="cid:printcareLogo" alt="PrintCare" style="height:40px;vertical-align:middle;" />';
             statusMessage = 'Ticket In Progress';
         } else if (newStatus === 'COMPLETED') {
             statusColor = '#10b981';
-            statusIcon = '✅';
+            // Use inline PrintCare logo for COMPLETED instead of emoji
+            statusIcon = '<img src="cid:printcareLogo" alt="PrintCare" style="height:40px;vertical-align:middle;" />';
             statusMessage = 'Ticket Completed';
         }
 
@@ -906,7 +962,7 @@ class EmailServiceApp {
 
                         ${newStatus === 'COMPLETED' ? `
                         <div style="background:#d1fae5; border:1px solid #a7f3d0; padding:20px 25px; border-radius:10px; margin:25px 0;">
-                            <h4 style="color:#059669; margin:0 0 10px 0; font-size:16px;">✅ Issue Resolved</h4>
+                            <h4 style="color:#059669; margin:0 0 10px 0; font-size:16px;">${newStatus === 'COMPLETED' ? '<img src="cid:printcareLogo" alt="PrintCare" style="height:40px;vertical-align:middle;margin-right:8px;" />Issue Resolved' : '✅ Issue Resolved'}</h4>
                             <p style="color:#059669; margin:0; font-size:14px;">Great news! Your ticket has been completed. If you have any concerns or the issue persists, please don't hesitate to contact us or create a new ticket.</p>
                         </div>
                         ` : ''}
@@ -974,6 +1030,8 @@ class EmailServiceApp {
             statusUpdateTemplate,
             creatorTemplate
         });
+
+        // Inline logo is handled globally via this.inlineAttachments (loaded at constructor)
 
             // Build a deduplicated list of recipients and send appropriate templates
             const sentEmails = new Set();
