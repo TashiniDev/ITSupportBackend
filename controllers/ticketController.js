@@ -152,13 +152,13 @@ exports.createTicket = async (req, res) => {
                 AND u.categoryId = ?
             `;
             
-            // Get IT Head (users with role ID 3)
+            // Get ALL IT Heads (users with role ID 3) - Ensure all receive notification emails
             let itHeadQuery = `
                 SELECT DISTINCT u.email, u.name 
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.roleId = 3
-                LIMIT 1
+                ORDER BY u.name ASC
             `;
             
             // Get users with role ID 1 (to be notified on ticket creation)
@@ -177,8 +177,18 @@ exports.createTicket = async (req, res) => {
 
             console.log(`📋 Email notification recipients found:`);
             console.log(`   - Category team members: ${categoryTeamUsers.length}`);
-            console.log(`   - IT Head users: ${itHeadUsers.length}`);
+            console.log(`   - IT Head users (Role=3): ${itHeadUsers.length}`);
             console.log(`   - Role 1 users: ${roleOneUsersCreate.length}`);
+            
+            // Log IT heads for verification
+            if (itHeadUsers.length > 0) {
+                console.log(`🔍 IT Head details:`);
+                itHeadUsers.forEach((head, index) => {
+                    console.log(`   ${index + 1}. ${head.name || 'Unknown'} (${head.email || 'No email'})`);
+                });
+            } else {
+                console.log(`⚠️ WARNING: No IT Heads found - this may indicate a configuration issue`);
+            }
             
             try {
                 // If createdBy looks like a uid, try to resolve user by uid
@@ -254,11 +264,11 @@ exports.createTicket = async (req, res) => {
                 ticketData.approvalToken = approvalToken;
                 ticketData.tokenExpiry = tokenExpiry;
                 
-                // Get IT Head email
-                const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+                // Pass all IT Head users instead of just the first one
+                const itHeadUsers_filtered = itHeadUsers.filter(user => user.email);
 
                 // Send ticket creation email using Microsoft Graph API
-                // Notify category team members, the ticket creator, role 1 users, and the IT Head. The IT Head template contains approve/reject buttons.
+                // Notify category team members, the ticket creator, role 1 users, and all IT Heads. The IT Head template contains approve/reject buttons.
                 try {
                     // Only send to ticket creator if they are different from the requester
                     // The requester will get a separate confirmation email below
@@ -266,8 +276,8 @@ exports.createTicket = async (req, res) => {
                         ? creatorEmail 
                         : null;
                     
-                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadEmail, ticketCreatorEmailToSend, emailAttachments, roleOneUsersCreate);
-                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (IT Head, category team, ${ticketCreatorEmailToSend ? 'creator, ' : ''}role 1 users)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
+                    await emailServiceApp.sendTicketCreationEmail(ticketData, categoryTeamUsers, itHeadUsers_filtered, ticketCreatorEmailToSend, emailAttachments, roleOneUsersCreate, ticket.assignedToEmail);
+                    console.log(`📧 Ticket creation emails sent for ticket ${ticketNumber} (${itHeadUsers_filtered.length} IT Head(s), category team, ${ticketCreatorEmailToSend ? 'creator, ' : ''}role 1 users)${emailAttachments.length > 0 ? ` with ${emailAttachments.length} attachment(s)` : ''}`);
                     
                     // Always send confirmation email to the requester (email from form)
                     if (email) {
@@ -1083,7 +1093,8 @@ exports.updateTicketStatus = async (req, res) => {
                         c.Name as categoryName,
                         it.Name as issueTypeName,
                         rt.Name as requestTypeName,
-                        u.Name as assignedToName
+                        u.Name as assignedToName,
+                        u.email as assignedToEmail
                     FROM ticket t
                     LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
                     LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
@@ -1126,7 +1137,6 @@ exports.updateTicketStatus = async (req, res) => {
                         FROM user u 
                         WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                         AND u.roleId = 3
-                        LIMIT 1
                     `);
 
                     // Get users with role ID 1 (to be notified on status updates as well)
@@ -1137,7 +1147,15 @@ exports.updateTicketStatus = async (req, res) => {
                         AND u.roleId = 1
                     `);
                     
-                    console.log(`👑 IT Head found: ${itHeadUsers.length > 0 ? itHeadUsers[0].email : 'None'}`);
+                    console.log(`👑 IT Heads found for status update (Role=3): ${itHeadUsers.length}`);
+                    if (itHeadUsers.length > 0) {
+                        console.log(`🔍 IT Head details for status update:`);
+                        itHeadUsers.forEach((head, index) => {
+                            console.log(`   ${index + 1}. ${head.name || 'Unknown'} (${head.email || 'No email'})`);
+                        });
+                    } else {
+                        console.log(`⚠️ WARNING: No IT Heads found for status update - this may indicate a configuration issue`);
+                    }
                     
                     // Get ticket creator email (robust: try user.email OR user.id match, fallback to CreatedBy raw value if it's an email)
                     let ticketCreatorEmail = null;
@@ -1184,7 +1202,8 @@ exports.updateTicketStatus = async (req, res) => {
                     // include request type for notification templates
                     ticketData.requestType = ticketDetails.requestTypeName || 'N/A';
                     
-                    const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+                    // Filter IT heads with valid emails
+                    const itHeadUsers_filtered = itHeadUsers.filter(user => user.email);
                     
                     console.log(`📧 Attempting to send status update emails...`);
                     
@@ -1192,12 +1211,13 @@ exports.updateTicketStatus = async (req, res) => {
                     await emailServiceApp.sendTicketStatusUpdateEmail(
                         ticketData,
                         filteredTeamUsers,
-                        itHeadEmail,
+                        itHeadUsers_filtered,
                         ticketCreatorEmail,
                         currentStatus,
                         newStatus,
                         updatedBy,
-                        roleOneUsersStatusA
+                        roleOneUsersStatusA,
+                        ticketDetails.assignedToEmail
                     );
                     
                     console.log(`✅ Status update emails sent successfully for ticket ${ticketDetails.ticketNumber} (${currentStatus} → ${newStatus})`);
@@ -1547,7 +1567,8 @@ exports.addComment = async (req, res) => {
                             c.Name as categoryName,
                             it.Name as issueTypeName,
                             rt.Name as requestTypeName,
-                            u.Name as assignedToName
+                            u.Name as assignedToName,
+                            u.email as assignedToEmail
                         FROM ticket t
                         LEFT JOIN department d ON t.DepartmentId = d.Id AND d.IsActive = 1
                         LEFT JOIN company comp ON t.CompanyId = comp.Id AND comp.IsActive = 1
@@ -1569,9 +1590,9 @@ exports.addComment = async (req, res) => {
 
                     // Get IT Head
                     const [itHeadUsers] = await pool.query(`
-                        SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3 LIMIT 1
+                        SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3
                     `);
-                    const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+                    const itHeadUsers_filtered = itHeadUsers.filter(user => user.email);
 
                     // Resolve ticket creator email
                     let ticketCreatorEmail = null;
@@ -1603,7 +1624,7 @@ exports.addComment = async (req, res) => {
                         requestType: ticketDetails.requestTypeName || 'N/A'
                     };
 
-                    await emailServiceApp.sendTicketStatusUpdateEmail(ticketData, filteredTeamUsers, itHeadEmail, ticketCreatorEmail, 'NEW', 'PROCESSING', req.user?.name || req.user?.email || 'System', roleOneUsers);
+                    await emailServiceApp.sendTicketStatusUpdateEmail(ticketData, filteredTeamUsers, itHeadUsers_filtered, ticketCreatorEmail, 'NEW', 'PROCESSING', req.user?.name || req.user?.email || 'System', roleOneUsers, ticketDetails.assignedToEmail);
                     console.log(`📧 Processing status emails sent for ticket ${ticketData.ticketId}`);
                 } catch (err) {
                     console.error('❌ Failed to send processing status emails after comment:', err && err.message ? err.message : err);
@@ -1841,14 +1862,14 @@ exports.approveTicket = async (req, res) => {
             finalApprovedById = req.user?.id || null;
             finalApproverName = req.user?.name || req.user?.email || 'IT Head';
         } else if (tokenValidated) {
-            // Token-approved via email link — set ActionedBy to the primary IT Head user if available
-            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 LIMIT 1`);
+            // Token-approved via email link — show generic IT Head name since we can't determine which specific IT Head clicked
+            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
             if (itHeadRows && itHeadRows.length > 0) {
-                finalApprovedById = itHeadRows[0].Id;
-                finalApproverName = itHeadRows[0].Name || 'IT Head';
+                finalApprovedById = itHeadRows[0].Id; // Use first IT Head for DB reference
+                finalApproverName = 'IT Head'; // Show only "IT Head" when approved via email token
             } else {
                 finalApprovedById = null;
-                finalApproverName = 'IT Head (email link)';
+                finalApproverName = 'IT Head';
             }
         }
 
@@ -1965,23 +1986,32 @@ exports.approveTicket = async (req, res) => {
                 }
             }
 
-            // IT Head(s)
+            // ALL IT Head(s) - Ensure all IT heads with Role=3 receive approval notifications
             try {
                 const [heads] = await pool.query(`SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3`);
+                console.log(`🔍 Found ${heads.length} IT Head(s) for approval notifications`);
                 for (const h of heads) {
-                    if (h && h.email) recipientsMap.set(h.email.toLowerCase(), { email: h.email, name: h.name || 'IT Head' });
+                    if (h && h.email && h.email.includes('@')) {
+                        recipientsMap.set(h.email.toLowerCase(), { email: h.email, name: h.name || 'IT Head' });
+                        console.log(`   ➕ Added IT Head: ${h.name || 'IT Head'} (${h.email})`);
+                    } else {
+                        console.log(`   ⚠️ Skipping IT Head with invalid email: ${h.name || 'Unknown'} (${h.email || 'No email'})`);
+                    }
                 }
             } catch (e) {
                 console.error('Error fetching IT Head recipients for approval notifications', e.message);
             }
 
             // Send approval email to each recipient (avoid duplicates)
+            console.log(`📧 Sending approval notifications for ticket ${ticketNumber} - Approved by: ${finalApproverName}`);
+            console.log(`📋 Total recipients for approval notification: ${recipientsMap.size}`);
+            
             for (const [, r] of recipientsMap) {
                 try {
                     await emailServiceApp.sendTicketApprovalEmail(ticketData, r.email, r.name || r.email, finalApproverName, comments || '');
-                    console.log(`📧 Approval notification sent to ${r.email}`);
+                    console.log(`✅ Approval notification sent to ${r.name || r.email} (${r.email}) - Approved by: ${finalApproverName}`);
                 } catch (e) {
-                    console.error(`Error sending approval notification to ${r.email}:`, e.message);
+                    console.error(`❌ Error sending approval notification to ${r.email}:`, e.message);
                 }
             }
 
@@ -2090,13 +2120,14 @@ exports.rejectTicket = async (req, res) => {
             finalRejectedById = req.user?.id || null;
             finalRejectorName = req.user?.name || req.user?.email || 'IT Head';
         } else if (tokenValidated) {
-            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 LIMIT 1`);
+            // Token-rejected via email link — show generic IT Head name since we can't determine which specific IT Head clicked
+            const [itHeadRows] = await pool.query(`SELECT Id, Name FROM user WHERE roleId = 3 AND IsActive = 1 ORDER BY Name LIMIT 1`);
             if (itHeadRows && itHeadRows.length > 0) {
-                finalRejectedById = itHeadRows[0].Id;
-                finalRejectorName = itHeadRows[0].Name || 'IT Head';
+                finalRejectedById = itHeadRows[0].Id; // Use first IT Head for DB reference
+                finalRejectorName = 'IT Head'; // Show only "IT Head" when rejected via email token
             } else {
                 finalRejectedById = null;
-                finalRejectorName = 'IT Head (email link)';
+                finalRejectorName = 'IT Head';
             }
         }
 
@@ -2213,23 +2244,32 @@ exports.rejectTicket = async (req, res) => {
                 }
             }
 
-            // IT Head(s)
+            // ALL IT Head(s) - Ensure all IT heads with Role=3 receive rejection notifications
             try {
                 const [heads] = await pool.query(`SELECT DISTINCT u.email, u.name FROM user u WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' AND u.roleId = 3`);
+                console.log(`🔍 Found ${heads.length} IT Head(s) for rejection notifications`);
                 for (const h of heads) {
-                    if (h && h.email) recipientsMap.set(h.email.toLowerCase(), { email: h.email, name: h.name || 'IT Head' });
+                    if (h && h.email && h.email.includes('@')) {
+                        recipientsMap.set(h.email.toLowerCase(), { email: h.email, name: h.name || 'IT Head' });
+                        console.log(`   ➕ Added IT Head: ${h.name || 'IT Head'} (${h.email})`);
+                    } else {
+                        console.log(`   ⚠️ Skipping IT Head with invalid email: ${h.name || 'Unknown'} (${h.email || 'No email'})`);
+                    }
                 }
             } catch (e) {
                 console.error('Error fetching IT Head recipients for rejection notifications', e.message);
             }
 
             // Send rejection email to each recipient (avoid duplicates)
+            console.log(`📧 Sending rejection notifications for ticket ${ticketNumber} - Rejected by: ${finalRejectorName}`);
+            console.log(`📋 Total recipients for rejection notification: ${recipientsMap.size}`);
+            
             for (const [, r] of recipientsMap) {
                 try {
                     await emailServiceApp.sendTicketRejectionEmail(ticketData, r.email, r.name || r.email, finalRejectorName, reason || '');
-                    console.log(`📧 Rejection notification sent to ${r.email}`);
+                    console.log(`✅ Rejection notification sent to ${r.name || r.email} (${r.email}) - Rejected by: ${finalRejectorName}`);
                 } catch (e) {
-                    console.error(`Error sending rejection notification to ${r.email}:`, e.message);
+                    console.error(`❌ Error sending rejection notification to ${r.email}:`, e.message);
                 }
             }
 
@@ -2402,7 +2442,6 @@ exports.updateTicketToProcessing = async (req, res) => {
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.roleId = 3
-                LIMIT 1
             `);
             // Get users with role ID 1 (to be notified on status updates as well)
             const [roleOneUsersStatusB] = await pool.query(`
@@ -2444,7 +2483,7 @@ exports.updateTicketToProcessing = async (req, res) => {
                 severityLevel: ticket.SeverityLevel || 'LOW'
             };
             
-            const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+            const itHeadUsers_filtered = itHeadUsers.filter(user => user.email);
             
             // Only send to ticket creator if different from requester
             const ticketCreatorEmailToSend = (creatorEmail && ticket.Email && creatorEmail.toLowerCase() !== ticket.Email.toLowerCase()) 
@@ -2454,12 +2493,13 @@ exports.updateTicketToProcessing = async (req, res) => {
             await emailServiceApp.sendTicketStatusUpdateEmail(
                 ticketData,
                 categoryTeamUsers,
-                itHeadEmail,
+                itHeadUsers_filtered,
                 ticketCreatorEmailToSend,
                 currentStatus,
                 'PROCESSING',
                 updatedBy,
-                roleOneUsersStatusB
+                roleOneUsersStatusB,
+                ticket.assignedToEmail
             );
             
             console.log(`📧 Status update emails sent for ticket ${updatedTicket.ticketNumber}`);
@@ -2642,7 +2682,6 @@ exports.updateTicketToCompleted = async (req, res) => {
                 FROM user u 
                 WHERE u.IsActive = 1 AND u.email IS NOT NULL AND u.email != '' 
                 AND u.roleId = 3
-                LIMIT 1
             `);
 
             // Get users with role ID 1 (to be notified on status updates as well)
@@ -2685,7 +2724,7 @@ exports.updateTicketToCompleted = async (req, res) => {
                 severityLevel: ticket.SeverityLevel || 'LOW'
             };
             
-            const itHeadEmail = itHeadUsers.length > 0 ? itHeadUsers[0].email : null;
+            const itHeadUsers_filtered = itHeadUsers.filter(user => user.email);
             
             // Only send to ticket creator if different from requester
             const ticketCreatorEmailToSend = (creatorEmail && ticket.Email && creatorEmail.toLowerCase() !== ticket.Email.toLowerCase()) 
@@ -2695,12 +2734,13 @@ exports.updateTicketToCompleted = async (req, res) => {
             await emailServiceApp.sendTicketStatusUpdateEmail(
                 ticketData,
                 categoryTeamUsers,
-                itHeadEmail,
+                itHeadUsers_filtered,
                 ticketCreatorEmailToSend,
                 currentStatus,
                 'COMPLETED',
                 updatedBy,
-                roleOneUsersStatusC
+                roleOneUsersStatusC,
+                ticket.assignedToEmail
             );
             
             console.log(`📧 Status update emails sent for ticket ${updatedTicket.ticketNumber}`);

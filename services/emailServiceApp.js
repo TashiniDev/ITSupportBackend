@@ -331,15 +331,16 @@ class EmailServiceApp {
     }
 
     /**
-     * Send ticket creation notification email to team members in the specific category and IT head
+     * Send ticket creation notification email to team members in the specific category and IT heads
      * @param {Object} ticketData - Ticket information
      * @param {Array} categoryTeamMembers - Array of team member objects who work on this specific category
-     * @param {string} itHeadEmail - Email of the IT head
+     * @param {Array} itHeadUsers - Array of IT head users with email and name properties
      * @param {string} ticketCreatorEmail - Email of the ticket creator
      * @param {Array} attachments - Array of attachment objects with name, contentType, and contentBytes
      * @param {Array} roleOneUsers - Array of users with role ID 1 to be notified
+     * @param {string} assigneeEmail - Email of the person assigned to handle the ticket
      */
-    async sendTicketCreationEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, attachments = [], roleOneUsers = []) {
+    async sendTicketCreationEmail(ticketData, categoryTeamMembers, itHeadUsers, ticketCreatorEmail, attachments = [], roleOneUsers = [], assigneeEmail = null) {
         const {
             ticketId,
             category,
@@ -589,16 +590,15 @@ class EmailServiceApp {
         `;
 
         try {
-            // Send email to all team members in this category (but NOT to the requester)
+            // Send email to all team members in this category (INCLUDING the requester)
             if (categoryTeamMembers && categoryTeamMembers.length > 0) {
                 for (const teamMember of categoryTeamMembers) {
-                    // Skip sending category team email to the requester
+                    // Always send to team members, including the requester - they should get comprehensive notifications
                     const isRequester = teamMember.email && requesterEmail && 
                                        teamMember.email.toLowerCase() === requesterEmail.toLowerCase();
                     
                     if (isRequester) {
-                        console.log(`⏭️ Skipping category team email for requester ${teamMember.email} - will send confirmation email instead`);
-                        continue;
+                        console.log(`📧 Sending comprehensive ticket notification to requester ${teamMember.email} as team member`);
                     }
                     
                     const memberEmailData = {
@@ -614,22 +614,40 @@ class EmailServiceApp {
                 }
             }
 
-            // Send email to IT Head
-            if (itHeadEmail) {
-                const itHeadEmailData = {
-                    to: itHeadEmail,
-                    toName: 'IT Head',
-                    subject: `New Ticket Created - ${ticketId} (${category}) - Assigned to ${assignedTo}`,
-                    body: itHeadTemplate,
-                    contentType: 'HTML',
-                    attachments: attachments
-                };
-                await this.sendEmailAsUser(itHeadEmailData);
-                console.log(`📧 Ticket notification email sent to IT Head at ${itHeadEmail}`);
+            // Send email to ALL IT Heads (Role=3) - Ensure all receive emails
+            if (itHeadUsers && itHeadUsers.length > 0) {
+                console.log(`📧 Sending emails to ${itHeadUsers.length} IT Head(s)...`);
+                for (const itHead of itHeadUsers) {
+                    if (itHead.email && itHead.email.includes('@')) {
+                        const itHeadEmailData = {
+                            to: itHead.email,
+                            toName: itHead.name || 'IT Head',
+                            subject: `New Ticket Created - ${ticketId} (${category}) - Assigned to ${assignedTo}`,
+                            body: itHeadTemplate,
+                            contentType: 'HTML',
+                            attachments: attachments
+                        };
+                        try {
+                            await this.sendEmailAsUser(itHeadEmailData);
+                            console.log(`✅ Ticket notification email sent successfully to IT Head: ${itHead.name || 'IT Head'} (${itHead.email})`);
+                        } catch (emailError) {
+                            console.error(`❌ Failed to send email to IT Head ${itHead.name || 'IT Head'} (${itHead.email}):`, emailError.message);
+                        }
+                    } else {
+                        console.log(`⚠️ Skipping IT Head due to invalid email: ${itHead.name || 'Unknown'} (${itHead.email || 'No email'})`);
+                    }
+                }
+                console.log(`📊 IT Head email summary: Attempted to send to ${itHeadUsers.length} IT Head(s)`);
+            } else {
+                console.log(`⚠️ No IT Heads found to notify for ticket creation`);
             }
 
-            // Send confirmation email to ticket creator
-            if (ticketCreatorEmail) {
+            // NOTE: Requester will receive a separate confirmation email via ticket controller
+            // Don't send the comprehensive notification to requester here to avoid duplicate emails
+            console.log(`ℹ️ Requester notification skipped here - will receive separate confirmation email`);
+
+            // Send confirmation email to ticket creator (if different from requester)
+            if (ticketCreatorEmail && ticketCreatorEmail.toLowerCase() !== (requesterEmail || '').toLowerCase()) {
                 const creatorEmailData = {
                     to: ticketCreatorEmail,
                     toName: requesterName,
@@ -641,12 +659,41 @@ class EmailServiceApp {
                 await this.sendEmailAsUser(creatorEmailData);
                 console.log(`📧 Ticket confirmation email sent to creator at ${ticketCreatorEmail}`);
             }
+
+            // Send notification email to assignee (person assigned to handle the ticket)
+            if (assigneeEmail && assigneeEmail.includes('@')) {
+                // Check if assignee is already covered by other notifications
+                const isRequester = assigneeEmail.toLowerCase() === (requesterEmail || '').toLowerCase();
+                const isCreator = assigneeEmail.toLowerCase() === (ticketCreatorEmail || '').toLowerCase();
+                const isItHead = itHeadUsers && itHeadUsers.some(head => 
+                    head.email && head.email.toLowerCase() === assigneeEmail.toLowerCase()
+                );
+                const isCategoryTeamMember = categoryTeamMembers && categoryTeamMembers.some(member => 
+                    member.email && member.email.toLowerCase() === assigneeEmail.toLowerCase()
+                );
+
+                if (!isRequester && !isCreator && !isItHead && !isCategoryTeamMember) {
+                    console.log(`📧 Sending assignment notification to assignee: ${assigneeEmail}`);
+                    const assigneeEmailData = {
+                        to: assigneeEmail,
+                        toName: assignedTo || 'Assignee',
+                        subject: `New Ticket Assigned - ${ticketId} (${category})`,
+                        body: assigneeTemplate,
+                        contentType: 'HTML',
+                        attachments: attachments
+                    };
+                    await this.sendEmailAsUser(assigneeEmailData);
+                    console.log(`📧 Assignment notification sent to assignee at ${assigneeEmail}`);
+                } else {
+                    console.log(`ℹ️ Assignee ${assigneeEmail} already covered by other notifications`);
+                }
+            }
             
-            // Send notification email to all users with role ID 1 (but NOT to the requester or ticket creator)
+            // Send notification email to all users with role ID 1 (including requester - they get comprehensive notifications)
             if (roleOneUsers && roleOneUsers.length > 0) {
                 console.log(`📧 Sending emails to ${roleOneUsers.length} role 1 users...`);
                 for (const roleOneUser of roleOneUsers) {
-                    // Skip sending to the requester
+                    // Always send to role 1 users, including the requester
                     const isRequester = roleOneUser.email && requesterEmail && 
                                        roleOneUser.email.toLowerCase() === requesterEmail.toLowerCase();
                     
@@ -655,8 +702,7 @@ class EmailServiceApp {
                                      roleOneUser.email.toLowerCase() === ticketCreatorEmail.toLowerCase();
                     
                     if (isRequester) {
-                        console.log(`⏭️ Skipping role 1 email for requester ${roleOneUser.email} - will receive confirmation email instead`);
-                        continue;
+                        console.log(`📧 Sending comprehensive notification to requester ${roleOneUser.email} as role 1 user`);
                     }
                     
                     if (isCreator) {
@@ -692,13 +738,15 @@ class EmailServiceApp {
      * Send ticket status update notification email
      * @param {Object} ticketData - Ticket information
      * @param {Array} categoryTeamMembers - Array of team member objects in the same category
-     * @param {string} itHeadEmail - Email of the IT head
+     * @param {Array} itHeadUsers - Array of IT head users with email and name properties
      * @param {string} ticketCreatorEmail - Email of the ticket creator
      * @param {string} previousStatus - The previous status of the ticket
      * @param {string} newStatus - The new status of the ticket
      * @param {string} updatedBy - Who updated the status
+     * @param {Array} roleOneUsers - Array of role one users
+     * @param {string} assigneeEmail - Email of the person assigned to handle the ticket
      */
-    async sendTicketStatusUpdateEmail(ticketData, categoryTeamMembers, itHeadEmail, ticketCreatorEmail, previousStatus, newStatus, updatedBy, roleOneUsers = []) {
+    async sendTicketStatusUpdateEmail(ticketData, categoryTeamMembers, itHeadUsers, ticketCreatorEmail, previousStatus, newStatus, updatedBy, roleOneUsers = [], assigneeEmail = null) {
         const {
             ticketId,
             category,
@@ -898,11 +946,13 @@ class EmailServiceApp {
             try {
                 const teamCount = Array.isArray(categoryTeamMembers) ? categoryTeamMembers.length : 0;
                 const role1Count = Array.isArray(roleOneUsers) ? roleOneUsers.length : 0;
-                console.log(`🔍 Recipient counts -> categoryTeamMembers: ${teamCount}, roleOneUsers: ${role1Count}, itHeadEmail: ${itHeadEmail || 'none'}, ticketCreatorEmail: ${ticketCreatorEmail || 'none'}, requesterEmail: ${requesterEmail || 'none'}`);
+                const itHeadCount = Array.isArray(itHeadUsers) ? itHeadUsers.length : 0;
+                console.log(`🔍 Recipient counts -> categoryTeamMembers: ${teamCount}, roleOneUsers: ${role1Count}, itHeadUsers: ${itHeadCount}, ticketCreatorEmail: ${ticketCreatorEmail || 'none'}, requesterEmail: ${requesterEmail || 'none'}`);
                 // list a few addresses for quick debugging
                 const sampleAddrs = [];
                 if (Array.isArray(categoryTeamMembers)) sampleAddrs.push(...categoryTeamMembers.slice(0,5).map(u=>u.email));
                 if (Array.isArray(roleOneUsers)) sampleAddrs.push(...roleOneUsers.slice(0,5).map(u=>u.email));
+                if (Array.isArray(itHeadUsers)) sampleAddrs.push(...itHeadUsers.slice(0,5).map(u=>u.email));
                 console.log(`🔍 Sample addresses: ${sampleAddrs.filter(Boolean).join(', ')}`);
             } catch (dbgErr) {
                 console.error('🔍 Error while logging recipient debug info:', dbgErr);
@@ -911,7 +961,7 @@ class EmailServiceApp {
             // Log recipients for debugging
         console.log('📧 Debugging Email Recipients:', {
             categoryTeamMembers,
-            itHeadEmail,
+            itHeadUsers,
             ticketCreatorEmail,
             roleOneUsers
         });
@@ -983,6 +1033,24 @@ class EmailServiceApp {
                 console.log(`ℹ️ No ticket creator email to notify`);
             }
 
+            // Send email to assignee (person assigned to handle the ticket)
+            if (assigneeEmail && assigneeEmail.includes('@')) {
+                const assigneeAddr = (assigneeEmail || '').toLowerCase().trim();
+                if (assigneeAddr) {
+                    console.log(`📝 Queueing email to ticket assignee: ${assigneeAddr}`);
+                    const assigneeEmailData = {
+                        to: assigneeAddr,
+                        toName: assignedTo || 'Assignee',
+                        subject: `Ticket Assignment Update - ${ticketId} (${newStatus})`,
+                        body: statusUpdateTemplate, // Use status update template for assignee
+                        contentType: 'HTML'
+                    };
+                    queueEmail(assigneeEmailData, 'assignee');
+                }
+            } else {
+                console.log(`ℹ️ No assignee email to notify`);
+            }
+
             // Send email to other team members in the same category (skip if they are the creator or IT Head)
             if (categoryTeamMembers && categoryTeamMembers.length > 0) {
                 console.log(`� Preparing emails for ${categoryTeamMembers.length} category team members`);
@@ -994,8 +1062,12 @@ class EmailServiceApp {
                         console.log(`ℹ️ Skipping team member ${addr} because they are the ticket creator (creator already queued).`);
                         continue;
                     }
-                    if (addr === (itHeadEmail || '').toLowerCase().trim()) {
-                        console.log(`ℹ️ Skipping team member ${addr} because they are the IT Head (IT Head will receive a separate notification).`);
+                    // Check if this team member is an IT Head to avoid duplicate emails
+                    const isItHead = itHeadUsers && itHeadUsers.some(head => 
+                        head.email && head.email.toLowerCase().trim() === addr
+                    );
+                    if (isItHead) {
+                        console.log(`ℹ️ Skipping team member ${addr} because they are an IT Head (IT Head will receive a separate notification).`);
                         continue;
                     }
                     console.log(`   📤 Queueing status update for team member ${teamMember.name} (${addr})`);
@@ -1012,27 +1084,33 @@ class EmailServiceApp {
                 console.log(`ℹ️ No category team members to notify`);
             }
 
-            // Send email to IT Head (if not the same as creator)
-            if (itHeadEmail) {
-                const itAddr = (itHeadEmail || '').toLowerCase().trim();
-                if (itAddr) {
-                    // If IT Head is the creator, they have already been queued above as creator
-                    if (ticketCreatorEmail && itAddr === (ticketCreatorEmail || '').toLowerCase().trim()) {
-                        console.log(`ℹ️ Skipping IT Head ${itAddr} because they are the ticket creator (creator already queued).`);
+            // Send email to ALL IT Heads (Role=3) - Ensure all receive status update emails for PROCESSING and COMPLETED
+            if (itHeadUsers && itHeadUsers.length > 0) {
+                console.log(`📧 Processing ${itHeadUsers.length} IT Head(s) for status update...`);
+                for (const itHead of itHeadUsers) {
+                    const itAddr = (itHead.email || '').toLowerCase().trim();
+                    if (itAddr && itAddr.includes('@')) {
+                        // If IT Head is the creator, they have already been queued above as creator
+                        if (ticketCreatorEmail && itAddr === (ticketCreatorEmail || '').toLowerCase().trim()) {
+                            console.log(`ℹ️ Skipping IT Head ${itHead.name || 'IT Head'} (${itAddr}) because they are the ticket creator (creator already queued).`);
+                        } else {
+                            console.log(`📧 Queueing email to IT Head: ${itHead.name || 'IT Head'} (${itAddr})`);
+                            const itHeadEmailData = {
+                                to: itAddr,
+                                toName: itHead.name || 'IT Head',
+                                subject: `Ticket Status Update - ${ticketId} (${category}) - ${newStatus}`,
+                                body: statusUpdateTemplate,
+                                contentType: 'HTML'
+                            };
+                            queueEmail(itHeadEmailData, `ithead:${itHead.name || 'IT Head'}`);
+                        }
                     } else {
-                        console.log(`� Queueing email to IT Head: ${itAddr}`);
-                        const itHeadEmailData = {
-                            to: itAddr,
-                            toName: 'IT Head',
-                            subject: `Ticket Status Update - ${ticketId} (${category}) - ${newStatus}`,
-                            body: statusUpdateTemplate,
-                            contentType: 'HTML'
-                        };
-                        queueEmail(itHeadEmailData, 'ithead');
+                        console.log(`⚠️ Skipping IT Head due to invalid email: ${itHead.name || 'Unknown'} (${itHead.email || 'No email'})`);
                     }
                 }
+                console.log(`📊 IT Head status update email summary: Processed ${itHeadUsers.length} IT Head(s) for ${newStatus} status`);
             } else {
-                console.log(`ℹ️ No IT Head to notify`);
+                console.log(`⚠️ No IT Heads found to notify for status update`);
             }
 
             // Also notify users with role ID 1 (if provided) using the same status update template
@@ -1046,9 +1124,12 @@ class EmailServiceApp {
                         console.log(`ℹ️ Skipping role-1 user ${addr} because they are the ticket creator (already queued).`);
                         continue;
                     }
-                    // Skip IT Head (already queued)
-                    if (itHeadEmail && addr === (itHeadEmail || '').toLowerCase().trim()) {
-                        console.log(`ℹ️ Skipping role-1 user ${addr} because they are the IT Head (already queued).`);
+                    // Skip IT Heads (already queued)
+                    const isItHead = itHeadUsers && itHeadUsers.some(head => 
+                        head.email && head.email.toLowerCase().trim() === addr
+                    );
+                    if (isItHead) {
+                        console.log(`ℹ️ Skipping role-1 user ${addr} because they are an IT Head (already queued).`);
                         continue;
                     }
                     const roleOneEmailData = {
@@ -1079,11 +1160,11 @@ class EmailServiceApp {
     }
 
     /**
-     * Send ticket approval email notification
+     * Send ticket approval email notification to all recipients including ALL IT Heads and requester
      * @param {Object} ticketData - Ticket information
      * @param {string} recipientEmail - Email of the recipient
      * @param {string} recipientName - Name of the recipient
-     * @param {string} approverName - Name of the person who approved
+     * @param {string} approverName - Name of the IT Head who approved (properly resolved)
      * @param {string} approvalComments - Optional comments from approver
      */
     async sendTicketApprovalEmail(ticketData, recipientEmail, recipientName, approverName, approvalComments = '') {
@@ -1188,7 +1269,7 @@ class EmailServiceApp {
         const emailData = {
             to: recipientEmail,
             toName: recipientName,
-            subject: `Ticket Approved - ${ticketId} (${category})`,
+            subject: `Ticket Approved by ${approverName} - ${ticketId} (${category})`,
             body: approvalTemplate,
             contentType: 'HTML'
         };
@@ -1197,11 +1278,11 @@ class EmailServiceApp {
     }
 
     /**
-     * Send ticket rejection email notification
+     * Send ticket rejection email notification to all recipients including ALL IT Heads and requester
      * @param {Object} ticketData - Ticket information
      * @param {string} recipientEmail - Email of the recipient
      * @param {string} recipientName - Name of the recipient
-     * @param {string} rejectorName - Name of the person who rejected
+     * @param {string} rejectorName - Name of the IT Head who rejected (properly resolved)
      * @param {string} rejectionReason - Reason for rejection
      */
     async sendTicketRejectionEmail(ticketData, recipientEmail, recipientName, rejectorName, rejectionReason = '') {
@@ -1307,7 +1388,7 @@ class EmailServiceApp {
         const emailData = {
             to: recipientEmail,
             toName: recipientName,
-            subject: `Ticket Rejected - ${ticketId} (${category})`,
+            subject: `Ticket Rejected by ${rejectorName} - ${ticketId} (${category})`,
             body: rejectionTemplate,
             contentType: 'HTML'
         };
